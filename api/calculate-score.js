@@ -1,5 +1,5 @@
 // api/calculate-score.js
-export const maxDuration = 60; // Tells Vercel to allow up to 60 seconds execution
+export const maxDuration = 60; // Allows up to 60 seconds execution
 
 import { createClient } from '@supabase/supabase-js'
 import { parse } from 'node-html-parser'
@@ -14,55 +14,76 @@ function parseDigialmHTML(html) {
   const root = parse(html)
   const questions = []
 
+  // Start by finding all the side-menus
   const tables = root.querySelectorAll('table.menu-tbl')
 
   for (const table of tables) {
-    // OPTIMIZATION: Query TDs only once per table to prevent Vercel memory crashes
-    const tds = table.querySelectorAll('td')
+    // THE FIX: Traverse UP the DOM tree to find the master container.
+    // This ensures we catch the "Given Answer" even if Digialm placed it
+    // outside the side-menu and inside the main question body.
+    let container = table;
+    while (container && container.tagName !== 'HTML') {
+      if (container.getAttribute && (container.getAttribute('class') || '').includes('questionPnlTbl')) {
+        break;
+      }
+      if (!container.parentNode) break;
+      container = container.parentNode;
+    }
+    // Fallback to the table itself if the wrapper isn't found
+    if (!container || container.tagName === 'HTML') container = table;
+
+    const tds = container.querySelectorAll('td');
     
-    const extract = (label) => {
+    // Multi-keyword safe extractor
+    const extract = (labels) => {
+      const keys = Array.isArray(labels) ? labels : [labels];
       for (let i = 0; i < tds.length - 1; i++) {
-        // SAFE FALLBACK: Use textContent and fallback to empty string if missing
-        const cellText = (tds[i].textContent || '').replace(/&nbsp;/g, ' ').trim()
-        if (cellText.includes(label)) {
-          const val = (tds[i + 1].textContent || '').replace(/&nbsp;/g, ' ').trim()
-          return val === '' ? null : val
+        // Safe text extraction accounting for different node-html-parser versions
+        const raw = tds[i].text || tds[i].textContent || '';
+        const cellText = raw.replace(/&nbsp;/g, ' ').toLowerCase().trim();
+        
+        if (keys.some(k => cellText.includes(k.toLowerCase()))) {
+          const nextRaw = tds[i + 1].text || tds[i + 1].textContent || '';
+          const val = nextRaw.replace(/&nbsp;/g, ' ').trim();
+          return (val === '' || val === '--') ? null : val;
         }
       }
-      return null
+      return null;
     }
 
-    const questionType = extract('Question Type')   // "MCQ" or "SA"
-    const questionId   = extract('Question ID')     // e.g. "8606541685"
+    const questionType = extract('Question Type') || '';
+    const isMcq = questionType.toUpperCase().includes('MCQ');
+    const questionId = extract('Question ID');
 
-    if (!questionId || !/^\d+$/.test(questionId)) continue
+    if (!questionId || !/^\d+$/.test(questionId)) continue;
 
-    let chosenOptionId = null
+    let chosenOptionId = null;
 
-    if (questionType === 'MCQ') {
+    if (isMcq) {
       const opt1   = extract('Option 1 ID')
       const opt2   = extract('Option 2 ID')
       const opt3   = extract('Option 3 ID')
       const opt4   = extract('Option 4 ID')
-      const chosen = extract('Chosen Option')   // "1", "2", "3", "4", or "--"
+      const chosen = extract('Chosen Option')
 
-      if (chosen && chosen !== '--' && /^[1-4]$/.test(chosen)) {
+      if (chosen && /^[1-4]$/.test(chosen)) {
         const optMap = { '1': opt1, '2': opt2, '3': opt3, '4': opt4 }
         chosenOptionId = optMap[chosen] ?? null
       }
     } else {
       // SA / Numerical 
-      const givenAnswer = extract('Given Answer') ?? extract('Chosen Option')
-
-      if (givenAnswer && givenAnswer !== '--' && givenAnswer !== '') {
-        chosenOptionId = givenAnswer
+      // Broaden search terms to catch any variation Digialm throws at us
+      const givenAnswer = extract(['Given Answer', 'Short Answer', 'Chosen Option', 'Answer :']);
+      
+      if (givenAnswer && givenAnswer.toLowerCase() !== 'not answered') {
+        chosenOptionId = givenAnswer;
       }
     }
 
     questions.push({
       questionId,
       chosenOptionId,
-      questionType: questionType === 'MCQ' ? 'mcq' : 'numerical',
+      questionType: isMcq ? 'mcq' : 'numerical',
     })
   }
 
@@ -75,7 +96,7 @@ function calculateScore(parsedQuestions, answerKey) {
   for (const k of answerKey) {
     keyMap[k.question_id] = {
       correctOptionId: k.correct_option_id,
-      type:    k.question_type,
+      type: k.question_type,
       subject: k.subject,
     }
   }
@@ -93,12 +114,12 @@ function calculateScore(parsedQuestions, answerKey) {
     if (!key) {
       unattempted++
       analysis.push({
-        questionId:      q.questionId,
-        chosenOptionId:  q.chosenOptionId,
+        questionId: q.questionId,
+        chosenOptionId: q.chosenOptionId,
         correctOptionId: null,
-        type:            q.questionType,
-        status:          'unknown',
-        marks:           0,
+        type: q.questionType,
+        status: 'unknown',
+        marks: 0,
         subject,
       })
       return
@@ -106,30 +127,43 @@ function calculateScore(parsedQuestions, answerKey) {
 
     let status, marks
 
-    // Ensure clean strings for direct comparison
+    // Ensure clean strings to avoid ghost spacing issues
     const chosen = q.chosenOptionId ? String(q.chosenOptionId).trim() : null;
     const correctAns = key.correctOptionId ? String(key.correctOptionId).trim() : null;
 
-    if (!chosen) {
-      status = 'unattempted'; marks = 0; unattempted++
-    } else if (
-      chosen === correctAns || 
-      // Safely catch numeric equivalents like "05" == "5"
-      (key.type === 'numerical' && Number(chosen) === Number(correctAns))
-    ) {
-      status = 'correct'; marks = 4; score += 4; correct++
+    if (!chosen || chosen === '--') {
+      status = 'unattempted'; marks = 0; unattempted++;
     } else {
-      status = 'wrong'
-      marks  = key.type === 'numerical' ? 0 : -1
-      score += marks
-      wrong++
+      const chosenNum = Number(chosen);
+      const correctNum = Number(correctAns);
+
+      // 1. Perfect string match (Handles MCQs and identical SA strings)
+      if (chosen === correctAns) {
+        status = 'correct'; marks = 4; score += 4; correct++;
+      } 
+      // 2. Equivalent numeric value (Catches "05" == "5" or "314.0" == "314")
+      else if (!isNaN(chosenNum) && !isNaN(correctNum) && chosenNum === correctNum) {
+        status = 'correct'; marks = 4; score += 4; correct++;
+      } 
+      // 3. Incorrect answer
+      else {
+        status = 'wrong';
+        // Flexible check: Determine penalty (MCQ: -1, Numerical: 0)
+        // Accounts for DB variations like 'integer', 'sa', or 'numerical'
+        const isNumericalType = q.questionType === 'numerical' || 
+                                key.type?.toLowerCase().includes('num') || 
+                                key.type?.toLowerCase().includes('int');
+        marks = isNumericalType ? 0 : -1;
+        score += marks;
+        wrong++;
+      }
     }
 
     analysis.push({
-      questionId:      q.questionId,
-      chosenOptionId:  q.chosenOptionId,
+      questionId: q.questionId,
+      chosenOptionId: q.chosenOptionId,
       correctOptionId: key.correctOptionId,
-      type:            key.type,
+      type: key.type || q.questionType,
       status,
       marks,
       subject,
@@ -176,7 +210,7 @@ export default async function handler(req, res) {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       },
-      signal: AbortSignal.timeout(50000), // Wait up to 50s for Digialm
+      signal: AbortSignal.timeout(50000), 
     })
     if (!resp.ok) throw new Error(`HTTP ${resp.status} — URL may have expired`)
     html = await resp.text()
