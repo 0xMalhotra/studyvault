@@ -42,19 +42,19 @@ function parseDigialmHTML(html) {
   const tables = root.querySelectorAll('table.menu-tbl')
 
   for (const table of tables) {
-    const tableHTML = table.innerHTML
-
-    // Helper: extract value for a label in this table's HTML.
-    // Uses \\s* around the value cell to handle whitespace/newlines Digialm
-    // sometimes inserts between closing </td> and the value — which caused
-    // [^<]+ to fail for SA "Given Answer" fields.
+    // ─── ROBUST DOM EXTRACTION ──────────────────────────────────────
+    // Instead of regex, iterate through the <td> elements directly. 
+    // This ignores all weird HTML spacing/newlines inside the tags.
     const extract = (label) => {
-      const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      const re = new RegExp(
-        escaped + '\\s*:</td>\\s*<td[^>]*>\\s*([^<\\s][^<]*?)\\s*</td>',
-        'i'
-      )
-      return tableHTML.match(re)?.[1]?.trim() ?? null
+      const tds = table.querySelectorAll('td')
+      for (let i = 0; i < tds.length - 1; i++) {
+        const cellText = tds[i].text.replace(/&nbsp;/g, ' ').trim()
+        if (cellText.includes(label)) {
+          const val = tds[i + 1].text.replace(/&nbsp;/g, ' ').trim()
+          return val === '' ? null : val
+        }
+      }
+      return null
     }
 
     const questionType = extract('Question Type')   // "MCQ" or "SA"
@@ -76,21 +76,17 @@ function parseDigialmHTML(html) {
         chosenOptionId = optMap[chosen] ?? null
       }
     } else {
-      // SA / Numerical — Digialm uses "Given Answer" label.
-      // Try "Chosen Option" as a fallback for older Digialm sheet formats
-      // that reuse the same label for SA questions.
-      const givenAnswer =
-        extract('Given Answer') ??
-        extract('Chosen Option')
+      // SA / Numerical 
+      const givenAnswer = extract('Given Answer') ?? extract('Chosen Option')
 
-      if (givenAnswer && givenAnswer !== '--' && givenAnswer !== '') {
+      if (givenAnswer && givenAnswer !== '--' && givenAnswer.trim() !== '') {
         chosenOptionId = givenAnswer.trim()
       }
     }
 
     questions.push({
       questionId,
-      chosenOptionId,   // null = unattempted
+      chosenOptionId,
       questionType: questionType === 'MCQ' ? 'mcq' : 'numerical',
     })
   }
@@ -133,11 +129,19 @@ function calculateScore(parsedQuestions, answerKey) {
       return
     }
 
-    let status, marks
+   let status, marks
 
-    if (!q.chosenOptionId) {
+    // Clean up strings to avoid invisible spacing issues
+    const chosen = q.chosenOptionId ? String(q.chosenOptionId).trim() : null;
+    const correct = key.correctOptionId ? String(key.correctOptionId).trim() : null;
+
+    if (!chosen) {
       status = 'unattempted'; marks = 0; unattempted++
-    } else if (q.chosenOptionId === key.correctOptionId) {
+    } else if (
+      chosen === correct || 
+      // Numeric fallback: safely catches "05" == "5" or "314.0" == "314"
+      (key.type === 'numerical' && Number(chosen) === Number(correct))
+    ) {
       status = 'correct'; marks = 4; score += 4; correct++
     } else {
       status = 'wrong'
