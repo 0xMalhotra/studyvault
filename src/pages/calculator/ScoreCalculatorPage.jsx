@@ -15,10 +15,8 @@ const SUBJECT_COLORS = {
   Mathematics: { color: '#f59e0b', bg: 'rgba(245,158,11,0.1)',  border: 'rgba(245,158,11,0.25)' },
 }
 
-// Use relative URL — works on Vercel (same origin) and via vite proxy locally
 const API_URL = '/api/calculate-score'
 
-// ─── Sub-components ──────────────────────────────────────────────────────────
 function GlassInput({ label, children }) {
   return (
     <div>
@@ -80,10 +78,10 @@ function LoadingSkeleton() {
 
 function AnalysisRow({ item, index }) {
   const cfg = {
-    correct:     { bg:'rgba(16,185,129,0.07)',   border:'rgba(16,185,129,0.2)',   badge:'rgba(16,185,129,0.15)',  badgeText:'#10b981', label:'✓ Correct',  marks:'+4' },
-    wrong:       { bg:'rgba(239,68,68,0.07)',     border:'rgba(239,68,68,0.2)',    badge:'rgba(239,68,68,0.15)',   badgeText:'#ef4444', label:'✗ Wrong',    marks: item.type==='numerical' ? '0' : '-1' },
-    unattempted: { bg:'rgba(100,116,139,0.04)',   border:'rgba(100,116,139,0.1)', badge:'rgba(100,116,139,0.12)', badgeText:'#64748b', label:'— Skipped',  marks:'0' },
-    unknown:     { bg:'rgba(100,116,139,0.04)',   border:'rgba(100,116,139,0.08)',badge:'rgba(100,116,139,0.1)',  badgeText:'#475569', label:'? N/A',       marks:'—' },
+    correct:     { bg:'rgba(16,185,129,0.07)',  border:'rgba(16,185,129,0.2)',  badge:'rgba(16,185,129,0.15)', badgeText:'#10b981', label:'✓ Correct',  marks:'+4' },
+    wrong:       { bg:'rgba(239,68,68,0.07)',    border:'rgba(239,68,68,0.2)',   badge:'rgba(239,68,68,0.15)',  badgeText:'#ef4444', label:'✗ Wrong',    marks: item.type==='numerical'?'0':'-1' },
+    unattempted: { bg:'rgba(100,116,139,0.04)',  border:'rgba(100,116,139,0.1)', badge:'rgba(100,116,139,0.12)',badgeText:'#64748b', label:'— Skipped',  marks:'0' },
+    unknown:     { bg:'rgba(100,116,139,0.03)',  border:'rgba(100,116,139,0.08)',badge:'rgba(100,116,139,0.1)', badgeText:'#475569', label:'? N/A',       marks:'—' },
   }[item.status] || {}
   const subColor = SUBJECT_COLORS[item.subject]?.color || '#94a3b8'
 
@@ -116,12 +114,11 @@ function AnalysisRow({ item, index }) {
 }
 
 function shareScore(result) {
-  const text = `📊 JEE Main 2026 Score (via StudyVault)\n\n🎯 ${result.score}/300\n✅ ${result.correct} correct  ❌ ${result.wrong} wrong  ⏭️ ${result.unattempted} skipped\n📈 Accuracy: ${result.accuracy}%\n\nCalculate yours → studyvault.vercel.app/calculator`
+  const text = `📊 JEE Main 2026 Score (via StudyVault)\n\n🎯 ${result.score}/300\n✅ ${result.correct} correct  ❌ ${result.wrong} wrong  ⏭️ ${result.unattempted} skipped\n📈 Accuracy: ${result.accuracy}%`
   if (navigator.share) navigator.share({ title:'My JEE Score', text })
   else { navigator.clipboard.writeText(text); alert('Score copied to clipboard!') }
 }
 
-// ─── Main page ────────────────────────────────────────────────────────────────
 export default function ScoreCalculatorPage() {
   const [url, setUrl]         = useState('')
   const [date, setDate]       = useState('')
@@ -157,14 +154,29 @@ export default function ScoreCalculatorPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ responseSheetUrl: url.trim(), examDate: date, shift }),
       })
-      const data = await resp.json()
+
+      // Read raw text first — never assume JSON
+      const rawText = await resp.text()
+
+      // Try to parse as JSON
+      let data
+      try {
+        data = JSON.parse(rawText)
+      } catch {
+        // Not JSON — show the first 300 chars to diagnose
+        console.error('Non-JSON response from API:', rawText.slice(0, 500))
+        if (resp.status === 404 && rawText.includes('<!DOCTYPE')) {
+          throw new Error('API route not found. Make sure `api/calculate-score.js` is deployed and `vercel dev` is running locally.')
+        }
+        throw new Error(`Server returned non-JSON response (status ${resp.status}). Check browser console for details.`)
+      }
+
       if (!resp.ok) throw new Error(data.error || `Server error ${resp.status}`)
       setResult(data)
       setTimeout(() => resultRef.current?.scrollIntoView({ behavior:'smooth', block:'start' }), 150)
     } catch (err) {
-      // Show friendly message for network errors (common on localhost without proxy)
       if (err.message === 'Failed to fetch') {
-        setError('Network error: make sure you are running `vercel dev` for local testing, or deploy to Vercel.')
+        setError('Network error: run `vercel dev` locally, or deploy to Vercel to test.')
       } else {
         setError(err.message)
       }
@@ -188,7 +200,6 @@ export default function ScoreCalculatorPage() {
   return (
     <div className="relative z-10 min-h-screen pt-20 pb-16 px-4" style={{ background:'var(--bg-primary)' }}>
 
-      {/* Ambient glows */}
       <div className="fixed inset-0 pointer-events-none" style={{ zIndex:0 }}>
         <div className="absolute top-20 left-1/3 w-80 h-80 rounded-full opacity-10 blur-3xl"
           style={{ background:'radial-gradient(circle,#3b82f6,transparent)' }}/>
@@ -222,7 +233,6 @@ export default function ScoreCalculatorPage() {
           style={{ animationFillMode:'forwards', animationDelay:'80ms', background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.09)', backdropFilter:'blur(20px)' }}>
 
           <div className="space-y-5">
-            {/* URL */}
             <GlassInput label="Response Sheet Link (cdn3)">
               <div className="relative">
                 <input
@@ -243,14 +253,14 @@ export default function ScoreCalculatorPage() {
                 )}
               </div>
               <p className="text-xs text-slate-600 mt-1.5">
-                Login to NTA portal → My Application → Response Sheet → copy the link
+                NTA portal → My Application → Response Sheet → copy the link
               </p>
             </GlassInput>
 
-            {/* Date + Shift */}
             <div className="grid grid-cols-2 gap-4">
               <GlassInput label="Exam Date">
-                <select value={date} onChange={e => setDate(e.target.value)} style={{ ...inputStyle, cursor:'pointer' }}
+                <select value={date} onChange={e => setDate(e.target.value)}
+                  style={{ ...inputStyle, cursor:'pointer' }}
                   onFocus={e => e.target.style.borderColor='rgba(99,102,241,0.5)'}
                   onBlur={e => e.target.style.borderColor='rgba(255,255,255,0.1)'}>
                   <option value="" style={{ background:'#0d1120' }}>Select date…</option>
@@ -278,7 +288,6 @@ export default function ScoreCalculatorPage() {
               </GlassInput>
             </div>
 
-            {/* Error */}
             {error && (
               <div className="flex items-start gap-3 px-4 py-3 rounded-2xl"
                 style={{ background:'rgba(239,68,68,0.08)', border:'1px solid rgba(239,68,68,0.2)' }}>
@@ -287,7 +296,6 @@ export default function ScoreCalculatorPage() {
               </div>
             )}
 
-            {/* Button */}
             <button onClick={handleCalculate} disabled={!canSubmit}
               className="w-full py-4 rounded-2xl text-sm font-bold text-white transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
               style={{
@@ -309,11 +317,9 @@ export default function ScoreCalculatorPage() {
 
         {loading && <LoadingSkeleton/>}
 
-        {/* Results */}
         {result && !loading && (
           <div ref={resultRef} className="space-y-4">
 
-            {/* Score banner */}
             <div className="rounded-3xl p-7 text-center relative overflow-hidden animate-fade-up opacity-0"
               style={{ animationFillMode:'forwards', background:'rgba(255,255,255,0.03)', border:`1px solid ${scoreColor}30` }}>
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-10">
@@ -352,14 +358,12 @@ export default function ScoreCalculatorPage() {
               </button>
             </div>
 
-            {/* Stats */}
             <div className="grid grid-cols-3 gap-3">
               <StatCard label="Correct"     value={result.correct}     color="#10b981" icon="✅" delay="50ms"/>
               <StatCard label="Wrong"       value={result.wrong}       color="#ef4444" icon="❌" delay="100ms"/>
               <StatCard label="Unattempted" value={result.unattempted} color="#64748b" icon="⏭️" delay="150ms"/>
             </div>
 
-            {/* Subject breakdown */}
             {result.subjectBreakdown?.length > 0 && (
               <div className="rounded-3xl p-5 animate-fade-up opacity-0"
                 style={{ animationFillMode:'forwards', animationDelay:'180ms', background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.08)' }}>
@@ -372,7 +376,6 @@ export default function ScoreCalculatorPage() {
               </div>
             )}
 
-            {/* Analysis table */}
             <div className="rounded-3xl overflow-hidden animate-fade-up opacity-0"
               style={{ animationFillMode:'forwards', animationDelay:'220ms', background:'rgba(255,255,255,0.02)', border:'1px solid rgba(255,255,255,0.08)' }}>
               <div className="px-5 py-4 flex flex-wrap items-center justify-between gap-3"
