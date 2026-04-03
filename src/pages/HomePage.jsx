@@ -5,7 +5,7 @@ const ModeCard = ({ mode }) => {
 
   return (
     <div
-      className={`glass-card p-8 cursor-pointer group animate-fade-up opacity-0 stagger-${mode.stagger}`}
+      className={`glass-card p-8 cursor-pointer group animate-fade-up opacity-0 stagger-${mode.stagger} relative overflow-hidden`}
       style={{ animationFillMode: 'forwards' }}
       onClick={() => navigate(mode.path)}
       onMouseEnter={e => {
@@ -17,35 +17,25 @@ const ModeCard = ({ mode }) => {
         e.currentTarget.style.borderColor = ''
       }}
     >
-      {/* Gradient wash */}
       <div
-        className={`absolute inset-0 rounded-[20px] opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none`}
+        className="absolute inset-0 rounded-[20px] opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
         style={{ background: `radial-gradient(ellipse at top left, ${mode.color}14, transparent 70%)` }}
       />
-
       <div className="relative z-10">
-        {/* Tag */}
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium mb-6"
           style={{ background: `${mode.color}14`, border: `1px solid ${mode.color}28`, color: mode.color }}>
           <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: mode.color }} />
           {mode.tag}
         </div>
-
-        {/* Icon */}
-        <div
-          className="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl mb-5 transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3"
-          style={{ background: `${mode.color}18`, border: `1px solid ${mode.color}28` }}
-        >
+        <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl mb-5 transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3"
+          style={{ background: `${mode.color}18`, border: `1px solid ${mode.color}28` }}>
           {mode.icon}
         </div>
-
-        <h2 className="font-display text-2xl font-extrabold text-white mb-2 tracking-tight">{mode.title}</h2>
-        <p className="text-slate-500 text-sm leading-relaxed mb-6">{mode.desc}</p>
-
-        {/* Feature list */}
-        <ul className="space-y-2 mb-7">
+        <h2 className="font-display text-xl font-extrabold text-white mb-2 tracking-tight">{mode.title}</h2>
+        <p className="text-slate-500 text-sm leading-relaxed mb-5">{mode.desc}</p>
+        <ul className="space-y-1.5 mb-6">
           {mode.features.map(f => (
-            <li key={f} className="flex items-center gap-2.5 text-xs text-slate-400">
+            <li key={f} className="flex items-center gap-2 text-xs text-slate-400">
               <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke={mode.color} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
               </svg>
@@ -53,17 +43,12 @@ const ModeCard = ({ mode }) => {
             </li>
           ))}
         </ul>
-
-        {/* CTA */}
-        <div className="flex items-center justify-between pt-5"
-          style={{ borderTop: '1px solid rgba(255,255,255,0.07)' }}>
+        <div className="flex items-center justify-between pt-4" style={{ borderTop: '1px solid rgba(255,255,255,0.07)' }}>
           <span className="text-xs text-slate-600">{mode.cta}</span>
-          <div
-            className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-300 group-hover:gap-3"
-            style={{ background: `${mode.color}18`, border: `1px solid ${mode.color}28`, color: mode.color }}
-          >
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all duration-300 group-hover:gap-3"
+            style={{ background: `${mode.color}18`, border: `1px solid ${mode.color}28`, color: mode.color }}>
             Start
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
             </svg>
           </div>
@@ -80,12 +65,12 @@ const modes = [
     icon: '📖',
     tag: 'Chapter-wise',
     title: 'Practice Mode',
-    desc: 'Study chapter by chapter with instant feedback. Perfect for building concepts and testing your knowledge one question at a time.',
+    desc: 'Study chapter by chapter with instant feedback. One question at a time.',
     features: [
-      'Subject → Chapter → Question flow',
-      'Instant answer reveal after each question',
-      'Full explanation with every answer',
-      'Score tracked per chapter session',
+      'Subject → Chapter → Question',
+      'Instant answer reveal',
+      'Full explanation per question',
+      'Score tracked per session',
     ],
     cta: '3 Subjects · 12 Chapters',
     color: '#3b82f6',
@@ -97,57 +82,65 @@ const modes = [
     icon: '🗓️',
     tag: 'Exam Simulation',
     title: 'PYQ Mode',
-    desc: 'Simulate the real JEE Main exam with previous year papers. Full 75-question test with a 3-hour timer and real exam interface.',
+    desc: 'Simulate real JEE Main with previous year papers. 75 questions, 3-hour timer.',
     features: [
       'Select Year → Attempt → Shift',
-      '75 questions with 3-hour countdown',
-      'Question palette for navigation',
-      'Detailed result & solutions after submit',
+      '75 questions with 3-hour timer',
+      'Real exam question palette',
+      'Detailed result & solutions',
     ],
     cta: '4 Years · 16 Papers',
     color: '#f59e0b',
     glow: 'rgba(245,158,11,0.25)',
   },
+  {
+    stagger: 3,
+    path: '/calculator',
+    icon: '🧮',
+    tag: 'JEE Main 2026',
+    title: 'Score Calculator',
+    desc: 'Paste your Digialm response sheet URL. Get your exact score instantly with full analysis.',
+    features: [
+      'Works with cdn3.digialm.com links',
+      '+4 / -1 marking with numericals',
+      'Subject-wise breakdown',
+      'No login required',
+    ],
+    cta: 'Jan 2026 · All shifts',
+    color: '#8b5cf6',
+    glow: 'rgba(139,92,246,0.25)',
+  },
 ]
 
 const HomePage = () => (
   <div className="relative z-10 min-h-screen px-6 pb-16 pt-28">
-    <div className="max-w-4xl mx-auto">
-      {/* Hero */}
+    <div className="max-w-5xl mx-auto">
       <div className="text-center mb-14 animate-fade-up opacity-0" style={{ animationFillMode: 'forwards' }}>
-        <div
-          className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-medium text-slate-400 mb-6"
-          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)' }}
-        >
+        <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-medium text-slate-400 mb-6"
+          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)' }}>
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-          JEE Main Preparation · PCM
+          JEE Main 2026 Preparation · PCM
         </div>
-
         <h1 className="font-display text-5xl md:text-6xl font-extrabold mb-4 tracking-tight leading-none">
           <span className="shimmer-text">Your Complete</span>
           <br />
           <span className="text-white">JEE Toolkit.</span>
         </h1>
-
         <p className="text-slate-500 text-lg max-w-lg mx-auto leading-relaxed">
-          Practice chapter-wise questions or simulate real JEE Main papers — everything you need to crack the exam.
+          Practice, simulate real papers, and calculate your score — everything in one place.
         </p>
       </div>
 
-      {/* Mode cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-10">
         {modes.map(mode => <ModeCard key={mode.path} mode={mode} />)}
       </div>
 
-      {/* Stats strip */}
-      <div
-        className="grid grid-cols-3 gap-4 p-5 rounded-2xl animate-fade-up opacity-0 stagger-3"
-        style={{ animationFillMode: 'forwards', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}
-      >
+      <div className="grid grid-cols-3 gap-4 p-5 rounded-2xl animate-fade-up opacity-0 stagger-4"
+        style={{ animationFillMode: 'forwards', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
         {[
           { value: '75+', label: 'Practice Questions', color: '#3b82f6' },
           { value: '16',  label: 'Previous Year Papers', color: '#f59e0b' },
-          { value: '3',   label: 'Subjects Covered', color: '#10b981' },
+          { value: '∞',   label: 'Score Calculations', color: '#8b5cf6' },
         ].map(({ value, label, color }) => (
           <div key={label} className="text-center">
             <div className="font-display text-2xl font-extrabold mb-0.5" style={{ color }}>{value}</div>
