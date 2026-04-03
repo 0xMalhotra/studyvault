@@ -152,7 +152,7 @@ function calculateScore(parsedQuestions, answerKey) {
       } else {
         status = 'wrong';
         // Numericals receive 0 negative marking, MCQs receive -1
-        marks = isNumericalQuestion ? 0 : -1;
+        marks = isNumericalQuestion ? -1 : -1;
         score += marks;
         wrong++;
       }
