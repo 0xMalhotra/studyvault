@@ -1,578 +1,424 @@
 import { useState, useRef } from 'react'
-import { Link } from 'react-router-dom'
 
-// ─── Exam date/shift config ────────────────────────────────────────────────
 const EXAM_DATES = [
-  { value: '2026-01-22', label: '22 January 2026' },
-  { value: '2026-01-23', label: '23 January 2026' },
-  { value: '2026-01-24', label: '24 January 2026' },
-  { value: '2026-01-28', label: '28 January 2026' },
-  { value: '2026-01-29', label: '29 January 2026' },
+  { label: '22 Jan 2026', value: '2026-01-22' },
+  { label: '23 Jan 2026', value: '2026-01-23' },
+  { label: '24 Jan 2026', value: '2026-01-24' },
+  { label: '28 Jan 2026', value: '2026-01-28' },
+  { label: '29 Jan 2026', value: '2026-01-29' },
 ]
-
-const SHIFTS = [
-  { value: 'shift1', label: 'Shift 1 — Morning (9:00 AM)' },
-  { value: 'shift2', label: 'Shift 2 — Evening (3:00 PM)' },
-]
+const SHIFTS = ['Shift 1', 'Shift 2']
 
 const SUBJECT_COLORS = {
-  Physics:     { color: '#3b82f6', bg: 'rgba(59,130,246,0.12)',  border: 'rgba(59,130,246,0.3)'  },
-  Chemistry:   { color: '#10b981', bg: 'rgba(16,185,129,0.12)',  border: 'rgba(16,185,129,0.3)'  },
-  Mathematics: { color: '#f59e0b', bg: 'rgba(245,158,11,0.12)',  border: 'rgba(245,158,11,0.3)'  },
-  Other:       { color: '#8b5cf6', bg: 'rgba(139,92,246,0.12)',  border: 'rgba(139,92,246,0.3)'  },
+  Physics:     { color: '#3b82f6', bg: 'rgba(59,130,246,0.1)',  border: 'rgba(59,130,246,0.25)' },
+  Chemistry:   { color: '#10b981', bg: 'rgba(16,185,129,0.1)',  border: 'rgba(16,185,129,0.25)' },
+  Mathematics: { color: '#f59e0b', bg: 'rgba(245,158,11,0.1)',  border: 'rgba(245,158,11,0.25)' },
 }
 
-// ─── Sub-components ────────────────────────────────────────────────────────
+// Use relative URL — works on Vercel (same origin) and via vite proxy locally
+const API_URL = '/api/calculate-score'
 
-const GlassCard = ({ children, className = '', style = {} }) => (
-  <div
-    className={`rounded-2xl ${className}`}
-    style={{
-      background: 'rgba(255,255,255,0.04)',
-      border: '1px solid rgba(255,255,255,0.09)',
-      backdropFilter: 'blur(20px)',
-      WebkitBackdropFilter: 'blur(20px)',
-      ...style,
-    }}
-  >
-    {children}
-  </div>
-)
-
-const InputField = ({ label, children }) => (
-  <div>
-    <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">
-      {label}
-    </label>
-    {children}
-  </div>
-)
-
-const inputStyle = {
-  width: '100%',
-  background: 'rgba(255,255,255,0.05)',
-  border: '1px solid rgba(255,255,255,0.12)',
-  borderRadius: '12px',
-  color: '#e2e8f0',
-  fontSize: '13px',
-  outline: 'none',
-  transition: 'border-color 0.2s, box-shadow 0.2s',
-}
-
-const LoadingSpinner = () => (
-  <svg className="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
-    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-    <path className="opacity-75" fill="currentColor"
-      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-  </svg>
-)
-
-const StatCard = ({ label, value, color, icon }) => (
-  <div
-    className="flex flex-col items-center justify-center p-5 rounded-2xl"
-    style={{ background: `${color}12`, border: `1px solid ${color}30` }}
-  >
-    <span className="text-2xl mb-1">{icon}</span>
-    <span className="font-display text-2xl font-extrabold" style={{ color }}>{value}</span>
-    <span className="text-xs text-slate-500 mt-0.5">{label}</span>
-  </div>
-)
-
-const StatusBadge = ({ status }) => {
-  const map = {
-    correct:    { bg: 'rgba(16,185,129,0.12)', border: 'rgba(16,185,129,0.35)', color: '#10b981', label: 'Correct', icon: '✓' },
-    wrong:      { bg: 'rgba(239,68,68,0.12)',  border: 'rgba(239,68,68,0.35)',  color: '#ef4444', label: 'Wrong',   icon: '✗' },
-    unattempted:{ bg: 'rgba(100,116,139,0.12)',border: 'rgba(100,116,139,0.3)', color: '#64748b', label: 'Skipped', icon: '—' },
-  }
-  const s = map[status] || map.unattempted
+// ─── Sub-components ──────────────────────────────────────────────────────────
+function GlassInput({ label, children }) {
   return (
-    <span
-      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold"
-      style={{ background: s.bg, border: `1px solid ${s.border}`, color: s.color }}
-    >
-      {s.icon} {s.label}
-    </span>
+    <div>
+      <label className="block text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">
+        {label}
+      </label>
+      {children}
+    </div>
   )
 }
 
-const RowBackground = {
-  correct:     'rgba(16,185,129,0.05)',
-  wrong:       'rgba(239,68,68,0.05)',
-  unattempted: 'transparent',
+function StatCard({ label, value, color, icon, delay = '0ms' }) {
+  return (
+    <div className="rounded-2xl p-5 flex flex-col gap-2 animate-fade-up opacity-0"
+      style={{ animationFillMode:'forwards', animationDelay:delay, background:`${color}0d`, border:`1px solid ${color}30` }}>
+      <div className="text-2xl">{icon}</div>
+      <div className="text-2xl font-bold" style={{ color }}>{value}</div>
+      <div className="text-xs text-slate-500">{label}</div>
+    </div>
+  )
 }
 
-// ─── Main Component ────────────────────────────────────────────────────────
-const ScoreCalculatorPage = () => {
+function SubjectCard({ subject, data }) {
+  const { color, bg, border } = SUBJECT_COLORS[subject] || { color:'#64748b', bg:'rgba(100,116,139,0.1)', border:'rgba(100,116,139,0.25)' }
+  const total = data.correct + data.wrong + data.unattempted || 1
+  const pct   = Math.round((data.correct / total) * 100)
+  return (
+    <div className="rounded-2xl p-4" style={{ background:bg, border:`1px solid ${border}` }}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full" style={{ background:color }}/>
+          <span className="text-xs font-semibold" style={{ color }}>{subject}</span>
+        </div>
+        <span className="text-lg font-bold" style={{ color }}>{data.score}</span>
+      </div>
+      <div className="h-1.5 rounded-full overflow-hidden mb-2" style={{ background:'rgba(255,255,255,0.07)' }}>
+        <div className="h-full rounded-full transition-all duration-700"
+          style={{ width:`${pct}%`, background:`linear-gradient(90deg,${color},${color}88)` }}/>
+      </div>
+      <div className="flex justify-between text-xs">
+        <span className="text-emerald-400">✓ {data.correct}</span>
+        <span className="text-red-400">✗ {data.wrong}</span>
+        <span className="text-slate-500">— {data.unattempted}</span>
+      </div>
+    </div>
+  )
+}
+
+function LoadingSkeleton() {
+  return (
+    <div className="space-y-4 mt-6">
+      {[160, 100, 300].map((h, i) => (
+        <div key={i} className="rounded-3xl animate-pulse"
+          style={{ height:h, background:'rgba(255,255,255,0.05)', border:'1px solid rgba(255,255,255,0.07)' }}/>
+      ))}
+    </div>
+  )
+}
+
+function AnalysisRow({ item, index }) {
+  const cfg = {
+    correct:     { bg:'rgba(16,185,129,0.07)',   border:'rgba(16,185,129,0.2)',   badge:'rgba(16,185,129,0.15)',  badgeText:'#10b981', label:'✓ Correct',  marks:'+4' },
+    wrong:       { bg:'rgba(239,68,68,0.07)',     border:'rgba(239,68,68,0.2)',    badge:'rgba(239,68,68,0.15)',   badgeText:'#ef4444', label:'✗ Wrong',    marks: item.type==='numerical' ? '0' : '-1' },
+    unattempted: { bg:'rgba(100,116,139,0.04)',   border:'rgba(100,116,139,0.1)', badge:'rgba(100,116,139,0.12)', badgeText:'#64748b', label:'— Skipped',  marks:'0' },
+    unknown:     { bg:'rgba(100,116,139,0.04)',   border:'rgba(100,116,139,0.08)',badge:'rgba(100,116,139,0.1)',  badgeText:'#475569', label:'? N/A',       marks:'—' },
+  }[item.status] || {}
+  const subColor = SUBJECT_COLORS[item.subject]?.color || '#94a3b8'
+
+  return (
+    <tr style={{ background:cfg.bg, borderBottom:`1px solid ${cfg.border}` }}>
+      <td className="px-4 py-3 text-xs text-slate-600 font-mono">{index+1}</td>
+      <td className="px-4 py-3 text-xs font-mono text-slate-400">{item.questionId}</td>
+      <td className="px-4 py-3">
+        <span className="text-xs px-2 py-0.5 rounded-full" style={{ background:`${subColor}18`, color:subColor }}>
+          {item.subject}
+        </span>
+      </td>
+      <td className="px-4 py-3 text-xs font-mono text-slate-300 max-w-32 truncate">
+        {item.chosenOptionId || <span className="text-slate-600 italic">—</span>}
+      </td>
+      <td className="px-4 py-3 text-xs font-mono text-slate-300 max-w-32 truncate">
+        {item.correctOptionId || '—'}
+      </td>
+      <td className="px-4 py-3">
+        <span className="text-xs px-2.5 py-1 rounded-full font-semibold"
+          style={{ background:cfg.badge, color:cfg.badgeText }}>
+          {cfg.label}
+        </span>
+      </td>
+      <td className="px-4 py-3 text-right text-xs font-bold font-mono" style={{ color:cfg.badgeText }}>
+        {cfg.marks}
+      </td>
+    </tr>
+  )
+}
+
+function shareScore(result) {
+  const text = `📊 JEE Main 2026 Score (via StudyVault)\n\n🎯 ${result.score}/300\n✅ ${result.correct} correct  ❌ ${result.wrong} wrong  ⏭️ ${result.unattempted} skipped\n📈 Accuracy: ${result.accuracy}%\n\nCalculate yours → studyvault.vercel.app/calculator`
+  if (navigator.share) navigator.share({ title:'My JEE Score', text })
+  else { navigator.clipboard.writeText(text); alert('Score copied to clipboard!') }
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
+export default function ScoreCalculatorPage() {
   const [url, setUrl]         = useState('')
-  const [examDate, setExamDate] = useState('')
+  const [date, setDate]       = useState('')
   const [shift, setShift]     = useState('')
   const [loading, setLoading] = useState(false)
-  const [error, setError]     = useState('')
   const [result, setResult]   = useState(null)
-  const [filter, setFilter]   = useState('all')  // 'all' | 'correct' | 'wrong' | 'unattempted'
-  const resultRef = useRef(null)
+  const [error, setError]     = useState('')
+  const [activeTab, setActiveTab] = useState('all')
+  const resultRef = useRef()
 
-  const isValid = url.startsWith('https://cdn3.digialm.com') && examDate && shift
+  const isValidUrl = url.trim().includes('cdn3.digialm.com')
+  const canSubmit  = url && date && shift && !loading
+
+  const inputStyle = {
+    background: 'rgba(255,255,255,0.05)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    color: '#e2e8f0',
+    borderRadius: 14,
+    outline: 'none',
+    width: '100%',
+    padding: '12px 16px',
+    fontSize: 14,
+  }
 
   const handleCalculate = async () => {
-    if (!isValid) return
-    setLoading(true)
-    setError('')
-    setResult(null)
+    if (!canSubmit) return
+    if (!isValidUrl) { setError('URL must contain cdn3.digialm.com'); return }
+    setError(''); setResult(null); setLoading(true)
 
     try {
-      const res = await fetch('/api/calculate-score', {
+      const resp = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ responseSheetUrl: url, examDate, shift }),
+        body: JSON.stringify({ responseSheetUrl: url.trim(), examDate: date, shift }),
       })
-      const data = await res.json()
-
-      if (!res.ok) {
-        setError(data.error || 'Something went wrong.')
-        return
-      }
-
+      const data = await resp.json()
+      if (!resp.ok) throw new Error(data.error || `Server error ${resp.status}`)
       setResult(data)
-      // Smooth scroll to results
-      setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100)
+      setTimeout(() => resultRef.current?.scrollIntoView({ behavior:'smooth', block:'start' }), 150)
     } catch (err) {
-      setError('Network error. Please check your connection and try again.')
+      // Show friendly message for network errors (common on localhost without proxy)
+      if (err.message === 'Failed to fetch') {
+        setError('Network error: make sure you are running `vercel dev` for local testing, or deploy to Vercel.')
+      } else {
+        setError(err.message)
+      }
     } finally {
       setLoading(false)
     }
   }
 
-  const handleShare = () => {
-    if (!result) return
-    const text = `🎯 My JEE Main Score: ${result.score}/300\n✅ Correct: ${result.correct} | ❌ Wrong: ${result.wrong} | ⬜ Skipped: ${result.unattempted}\n📊 Accuracy: ${result.accuracy}%\nCalculated on StudyVault`
-    if (navigator.share) {
-      navigator.share({ title: 'My JEE Main Score', text })
-    } else {
-      navigator.clipboard.writeText(text)
-      alert('Score copied to clipboard!')
-    }
-  }
-
-  const scorePercent = result ? Math.max(0, (result.score / result.maxScore) * 100) : 0
-  const scoreColor = result
-    ? result.score >= 200 ? '#10b981'
-    : result.score >= 120 ? '#f59e0b'
-    : '#ef4444'
-    : '#3b82f6'
-
-  const filteredAnalysis = result?.analysis?.filter(q => {
-    if (filter === 'all') return true
-    return q.status === filter
+  const filtered = result?.analysis?.filter(a => {
+    if (activeTab === 'all')         return true
+    if (activeTab === 'correct')     return a.status === 'correct'
+    if (activeTab === 'wrong')       return a.status === 'wrong'
+    if (activeTab === 'unattempted') return a.status === 'unattempted'
+    return true
   }) || []
 
+  const scoreColor = result
+    ? result.score >= 200 ? '#10b981' : result.score >= 100 ? '#f59e0b' : '#ef4444'
+    : '#3b82f6'
+
   return (
-    <div className="relative z-10 min-h-screen px-4 pb-20 pt-24">
-      {/* Background glow */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
-        <div style={{
-          position: 'absolute', top: '-150px', left: '-100px',
-          width: '500px', height: '500px', borderRadius: '50%', filter: 'blur(80px)',
-          background: 'radial-gradient(circle, rgba(139,92,246,0.15) 0%, transparent 70%)',
-        }} />
-        <div style={{
-          position: 'absolute', bottom: '-100px', right: '-80px',
-          width: '400px', height: '400px', borderRadius: '50%', filter: 'blur(80px)',
-          background: 'radial-gradient(circle, rgba(59,130,246,0.12) 0%, transparent 70%)',
-        }} />
+    <div className="relative z-10 min-h-screen pt-20 pb-16 px-4" style={{ background:'var(--bg-primary)' }}>
+
+      {/* Ambient glows */}
+      <div className="fixed inset-0 pointer-events-none" style={{ zIndex:0 }}>
+        <div className="absolute top-20 left-1/3 w-80 h-80 rounded-full opacity-10 blur-3xl"
+          style={{ background:'radial-gradient(circle,#3b82f6,transparent)' }}/>
+        <div className="absolute bottom-1/3 right-1/4 w-64 h-64 rounded-full opacity-8 blur-3xl"
+          style={{ background:'radial-gradient(circle,#8b5cf6,transparent)' }}/>
       </div>
 
-      <div className="max-w-3xl mx-auto relative z-10">
-        {/* Breadcrumb */}
-        <div className="flex items-center gap-2 text-xs text-slate-600 mb-8 animate-fade-in opacity-0"
-          style={{ animationFillMode: 'forwards' }}>
-          <Link to="/" className="hover:text-slate-400 transition-colors">Home</Link>
-          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-          <span style={{ color: '#8b5cf6' }}>Score Calculator</span>
-        </div>
+      <div className="relative z-10 max-w-3xl mx-auto">
 
-        {/* ── Hero ── */}
-        <div className="text-center mb-10 animate-fade-up opacity-0" style={{ animationFillMode: 'forwards' }}>
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-medium text-slate-400 mb-5"
-            style={{ background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.25)' }}>
-            <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
-            JEE Main 2026 — January Attempt
+        {/* Hero */}
+        <div className="text-center mb-10 animate-fade-up opacity-0" style={{ animationFillMode:'forwards' }}>
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-semibold mb-5"
+            style={{ background:'rgba(59,130,246,0.12)', border:'1px solid rgba(59,130,246,0.3)', color:'#60a5fa' }}>
+            <div className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse"/>
+            JEE Main 2026 · Jan Attempt
           </div>
-
-          <h1 className="font-display text-4xl md:text-5xl font-extrabold mb-3 tracking-tight">
-            <span style={{
-              background: 'linear-gradient(135deg, #a78bfa, #60a5fa, #34d399)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              backgroundClip: 'text',
-            }}>
-              Score Calculator
+          <h1 className="font-display text-4xl md:text-5xl font-extrabold text-white tracking-tight mb-3">
+            Score{' '}
+            <span style={{ background:'linear-gradient(135deg,#3b82f6,#8b5cf6)', WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>
+              Calculator
             </span>
           </h1>
-          <p className="text-slate-500 text-base max-w-md mx-auto">
-            Paste your Digialm response sheet link. Get your score instantly — no login required.
+          <p className="text-slate-400 text-base max-w-md mx-auto leading-relaxed">
+            Paste your Digialm response sheet link for instant score analysis.{' '}
+            <span className="text-slate-300 font-medium">No login required.</span>
           </p>
         </div>
 
-        {/* ── Input Card ── */}
-        <GlassCard
-          className="p-6 mb-5 animate-fade-up opacity-0 stagger-1"
-          style={{ animationFillMode: 'forwards' }}
-        >
-          <div className="space-y-4">
-            {/* URL input */}
-            <InputField label="Digialm Response Sheet URL">
+        {/* Input card */}
+        <div className="rounded-3xl p-7 mb-6 animate-fade-up opacity-0"
+          style={{ animationFillMode:'forwards', animationDelay:'80ms', background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.09)', backdropFilter:'blur(20px)' }}>
+
+          <div className="space-y-5">
+            {/* URL */}
+            <GlassInput label="Response Sheet Link (cdn3)">
               <div className="relative">
-                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                      d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                  </svg>
-                </div>
                 <input
                   type="url"
                   value={url}
                   onChange={e => setUrl(e.target.value)}
                   placeholder="https://cdn3.digialm.com/per/g28/pub/..."
-                  style={{ ...inputStyle, paddingLeft: '36px', paddingRight: '16px', paddingTop: '10px', paddingBottom: '10px' }}
-                  onFocus={e => { e.target.style.borderColor = '#8b5cf6'; e.target.style.boxShadow = '0 0 0 3px rgba(139,92,246,0.15)' }}
-                  onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.12)'; e.target.style.boxShadow = 'none' }}
+                  style={inputStyle}
+                  onFocus={e => e.target.style.borderColor='rgba(99,102,241,0.5)'}
+                  onBlur={e => e.target.style.borderColor='rgba(255,255,255,0.1)'}
                 />
+                {url && (
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-semibold">
+                    {isValidUrl
+                      ? <span className="text-emerald-400">✓ Valid</span>
+                      : <span className="text-red-400">✗ Must be cdn3.digialm.com</span>}
+                  </div>
+                )}
               </div>
-              {url && !url.startsWith('https://cdn3.digialm.com') && (
-                <p className="text-xs text-red-400 mt-1.5 flex items-center gap-1">
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                  URL must start with https://cdn3.digialm.com
-                </p>
-              )}
-            </InputField>
+              <p className="text-xs text-slate-600 mt-1.5">
+                Login to NTA portal → My Application → Response Sheet → copy the link
+              </p>
+            </GlassInput>
 
-            <div className="grid grid-cols-2 gap-3">
-              {/* Date selector */}
-              <InputField label="Exam Date">
-                <select
-                  value={examDate}
-                  onChange={e => setExamDate(e.target.value)}
-                  style={{ ...inputStyle, padding: '10px 12px', cursor: 'pointer' }}
-                  onFocus={e => { e.target.style.borderColor = '#8b5cf6'; e.target.style.boxShadow = '0 0 0 3px rgba(139,92,246,0.15)' }}
-                  onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.12)'; e.target.style.boxShadow = 'none' }}
-                >
-                  <option value="" style={{ background: '#0d1120' }}>Select date...</option>
+            {/* Date + Shift */}
+            <div className="grid grid-cols-2 gap-4">
+              <GlassInput label="Exam Date">
+                <select value={date} onChange={e => setDate(e.target.value)} style={{ ...inputStyle, cursor:'pointer' }}
+                  onFocus={e => e.target.style.borderColor='rgba(99,102,241,0.5)'}
+                  onBlur={e => e.target.style.borderColor='rgba(255,255,255,0.1)'}>
+                  <option value="" style={{ background:'#0d1120' }}>Select date…</option>
                   {EXAM_DATES.map(d => (
-                    <option key={d.value} value={d.value} style={{ background: '#0d1120' }}>{d.label}</option>
+                    <option key={d.value} value={d.value} style={{ background:'#0d1120' }}>{d.label}</option>
                   ))}
                 </select>
-              </InputField>
+              </GlassInput>
 
-              {/* Shift selector */}
-              <InputField label="Shift">
-                <select
-                  value={shift}
-                  onChange={e => setShift(e.target.value)}
-                  style={{ ...inputStyle, padding: '10px 12px', cursor: 'pointer' }}
-                  onFocus={e => { e.target.style.borderColor = '#8b5cf6'; e.target.style.boxShadow = '0 0 0 3px rgba(139,92,246,0.15)' }}
-                  onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.12)'; e.target.style.boxShadow = 'none' }}
-                >
-                  <option value="" style={{ background: '#0d1120' }}>Select shift...</option>
+              <GlassInput label="Shift">
+                <div className="flex gap-2">
                   {SHIFTS.map(s => (
-                    <option key={s.value} value={s.value} style={{ background: '#0d1120' }}>{s.label}</option>
+                    <button key={s} onClick={() => setShift(s)}
+                      className="flex-1 py-3 rounded-2xl text-sm font-semibold transition-all duration-200"
+                      style={{
+                        background: shift===s ? 'rgba(99,102,241,0.2)':'rgba(255,255,255,0.05)',
+                        border: shift===s ? '1px solid rgba(99,102,241,0.5)':'1px solid rgba(255,255,255,0.1)',
+                        color: shift===s ? '#a5b4fc':'#64748b',
+                        transform: shift===s ? 'scale(1.02)':'scale(1)',
+                      }}>
+                      {s}
+                    </button>
                   ))}
-                </select>
-              </InputField>
+                </div>
+              </GlassInput>
             </div>
 
             {/* Error */}
             {error && (
-              <div className="flex items-start gap-2.5 p-3 rounded-xl"
-                style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)' }}>
-                <svg className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
+              <div className="flex items-start gap-3 px-4 py-3 rounded-2xl"
+                style={{ background:'rgba(239,68,68,0.08)', border:'1px solid rgba(239,68,68,0.2)' }}>
+                <span className="text-red-400 flex-shrink-0 mt-0.5">⚠</span>
                 <p className="text-red-400 text-sm">{error}</p>
               </div>
             )}
 
-            {/* Calculate button */}
-            <button
-              onClick={handleCalculate}
-              disabled={!isValid || loading}
-              className="w-full py-3.5 rounded-2xl text-sm font-bold flex items-center justify-center gap-2.5 transition-all duration-200"
+            {/* Button */}
+            <button onClick={handleCalculate} disabled={!canSubmit}
+              className="w-full py-4 rounded-2xl text-sm font-bold text-white transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed"
               style={{
-                background: isValid && !loading
-                  ? 'linear-gradient(135deg, #8b5cf6, #3b82f6)'
-                  : 'rgba(255,255,255,0.06)',
-                color: isValid && !loading ? '#fff' : '#475569',
-                cursor: isValid && !loading ? 'pointer' : 'not-allowed',
-                boxShadow: isValid && !loading ? '0 8px 30px rgba(139,92,246,0.35)' : 'none',
-                transform: isValid && !loading ? 'scale(1)' : 'scale(1)',
+                background:'linear-gradient(135deg,#3b82f6,#6366f1,#8b5cf6)',
+                boxShadow: canSubmit ? '0 8px 32px rgba(99,102,241,0.35)':'none',
               }}
-              onMouseEnter={e => { if (isValid && !loading) e.currentTarget.style.transform = 'scale(1.02)' }}
-              onMouseLeave={e => { e.currentTarget.style.transform = 'scale(1)' }}
-            >
-              {loading ? (
-                <>
-                  <LoadingSpinner />
-                  Fetching & Calculating...
-                </>
-              ) : (
-                <>
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                  </svg>
-                  Calculate My Score
-                </>
-              )}
+              onMouseEnter={e => { if(canSubmit) e.currentTarget.style.transform='translateY(-2px) scale(1.005)' }}
+              onMouseLeave={e => { e.currentTarget.style.transform='none' }}>
+              {loading
+                ? <span className="flex items-center justify-center gap-3">
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"/>
+                    Fetching & Analysing…
+                  </span>
+                : '⚡ Calculate My Score'
+              }
             </button>
           </div>
-        </GlassCard>
+        </div>
 
-        {/* ── How it works ── */}
-        {!result && !loading && (
-          <GlassCard className="p-5 animate-fade-up opacity-0 stagger-2" style={{ animationFillMode: 'forwards' }}>
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">How it works</p>
-            <div className="grid grid-cols-3 gap-3">
-              {[
-                { step: '01', text: 'Paste your Digialm response sheet URL', icon: '🔗' },
-                { step: '02', text: 'Select exam date and shift', icon: '📅' },
-                { step: '03', text: 'Get instant score with full analysis', icon: '📊' },
-              ].map(({ step, text, icon }) => (
-                <div key={step} className="text-center">
-                  <div className="text-2xl mb-2">{icon}</div>
-                  <div className="text-xs font-mono text-violet-400 mb-1">{step}</div>
-                  <p className="text-xs text-slate-500 leading-relaxed">{text}</p>
+        {loading && <LoadingSkeleton/>}
+
+        {/* Results */}
+        {result && !loading && (
+          <div ref={resultRef} className="space-y-4">
+
+            {/* Score banner */}
+            <div className="rounded-3xl p-7 text-center relative overflow-hidden animate-fade-up opacity-0"
+              style={{ animationFillMode:'forwards', background:'rgba(255,255,255,0.03)', border:`1px solid ${scoreColor}30` }}>
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-10">
+                <div className="w-64 h-64 rounded-full blur-3xl" style={{ background:scoreColor }}/>
+              </div>
+              <p className="text-xs text-slate-500 uppercase tracking-widest font-semibold mb-3">Your Score</p>
+              <div>
+                <span className="text-7xl font-extrabold"
+                  style={{ background:`linear-gradient(135deg,${scoreColor},${scoreColor}bb)`, WebkitBackgroundClip:'text', WebkitTextFillColor:'transparent' }}>
+                  {result.score}
+                </span>
+                <span className="text-3xl font-bold text-slate-600">/300</span>
+              </div>
+              <p className="text-slate-400 text-sm mt-3 mb-5">
+                {result.score>=250?'🎉 Outstanding!':result.score>=180?'🔥 Excellent!':result.score>=120?'📚 Keep pushing!':'💪 Every attempt teaches something!'}
+              </p>
+              <div className="max-w-sm mx-auto mb-5">
+                <div className="flex justify-between text-xs text-slate-500 mb-1.5">
+                  <span>Accuracy</span>
+                  <span className="font-semibold text-slate-300">{result.accuracy}%</span>
                 </div>
-              ))}
-            </div>
-          </GlassCard>
-        )}
-
-        {/* ── Loading skeleton ── */}
-        {loading && (
-          <div className="space-y-4 animate-pulse">
-            <div className="h-40 rounded-2xl" style={{ background: 'rgba(255,255,255,0.04)' }} />
-            <div className="grid grid-cols-3 gap-3">
-              {[1,2,3].map(i => <div key={i} className="h-24 rounded-2xl" style={{ background: 'rgba(255,255,255,0.04)' }} />)}
-            </div>
-            <div className="h-64 rounded-2xl" style={{ background: 'rgba(255,255,255,0.04)' }} />
-          </div>
-        )}
-
-        {/* ── Results ── */}
-        {result && (
-          <div ref={resultRef} className="space-y-4 animate-fade-up opacity-0" style={{ animationFillMode: 'forwards' }}>
-
-            {/* Score card */}
-            <GlassCard className="p-7" style={{ border: `1px solid ${scoreColor}30` }}>
-              <div className="flex flex-col md:flex-row items-center gap-6">
-                {/* Score ring */}
-                <div className="relative flex-shrink-0">
-                  <svg className="w-32 h-32" viewBox="0 0 100 100">
-                    <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="8" />
-                    <circle
-                      cx="50" cy="50" r="42" fill="none"
-                      stroke={scoreColor} strokeWidth="8"
-                      strokeLinecap="round"
-                      strokeDasharray={`${2 * Math.PI * 42}`}
-                      strokeDashoffset={`${2 * Math.PI * 42 * (1 - scorePercent / 100)}`}
-                      transform="rotate(-90 50 50)"
-                      style={{ transition: 'stroke-dashoffset 1.2s ease' }}
-                    />
-                    <text x="50" y="46" textAnchor="middle" fill="white" fontSize="18" fontWeight="bold" fontFamily="Syne">
-                      {result.score}
-                    </text>
-                    <text x="50" y="60" textAnchor="middle" fill="#64748b" fontSize="9" fontFamily="DM Sans">
-                      /{result.maxScore}
-                    </text>
-                  </svg>
-                </div>
-
-                {/* Score details */}
-                <div className="flex-1 text-center md:text-left">
-                  <div className="text-slate-500 text-sm mb-1">
-                    {EXAM_DATES.find(d => d.value === result.examDate)?.label} · {result.shift === 'shift1' ? 'Shift 1' : 'Shift 2'}
-                  </div>
-                  <div className="font-display text-5xl font-extrabold mb-1" style={{ color: scoreColor }}>
-                    {result.score}
-                    <span className="text-xl text-slate-600 font-normal">/300</span>
-                  </div>
-                  <div className="flex items-center gap-3 justify-center md:justify-start mt-3 flex-wrap">
-                    <div className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full"
-                      style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.3)', color: '#10b981' }}>
-                      <span className="font-bold">{result.accuracy}%</span> Accuracy
-                    </div>
-                    <div className="text-xs text-slate-600">
-                      {result.totalQuestions} questions parsed
-                    </div>
-                    <button
-                      onClick={handleShare}
-                      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full transition-all duration-200"
-                      style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: '#94a3b8' }}
-                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.10)' }}
-                      onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)' }}
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                          d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z" />
-                      </svg>
-                      Share
-                    </button>
-                  </div>
+                <div className="h-2 rounded-full overflow-hidden" style={{ background:'rgba(255,255,255,0.07)' }}>
+                  <div className="h-full rounded-full transition-all duration-1000"
+                    style={{ width:`${result.accuracy}%`, background:`linear-gradient(90deg,${scoreColor},${scoreColor}88)` }}/>
                 </div>
               </div>
-            </GlassCard>
+              <button onClick={() => shareScore(result)}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-2xl text-xs font-semibold transition-all"
+                style={{ background:'rgba(255,255,255,0.07)', border:'1px solid rgba(255,255,255,0.12)', color:'#94a3b8' }}
+                onMouseEnter={e => e.currentTarget.style.background='rgba(255,255,255,0.11)'}
+                onMouseLeave={e => e.currentTarget.style.background='rgba(255,255,255,0.07)'}>
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
+                </svg>
+                Share Score
+              </button>
+            </div>
 
-            {/* Stats row */}
+            {/* Stats */}
             <div className="grid grid-cols-3 gap-3">
-              <StatCard label="Correct"   value={result.correct}     color="#10b981" icon="✓" />
-              <StatCard label="Wrong"     value={result.wrong}       color="#ef4444" icon="✗" />
-              <StatCard label="Skipped"   value={result.unattempted} color="#64748b" icon="—" />
+              <StatCard label="Correct"     value={result.correct}     color="#10b981" icon="✅" delay="50ms"/>
+              <StatCard label="Wrong"       value={result.wrong}       color="#ef4444" icon="❌" delay="100ms"/>
+              <StatCard label="Unattempted" value={result.unattempted} color="#64748b" icon="⏭️" delay="150ms"/>
             </div>
 
             {/* Subject breakdown */}
-            {result.subjects && Object.keys(result.subjects).filter(s => s !== 'Other').length > 0 && (
-              <GlassCard className="p-5">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Subject-wise Breakdown</p>
-                <div className="space-y-3">
-                  {Object.entries(result.subjects)
-                    .filter(([sub]) => sub !== 'Other' && (result.subjects[sub].correct + result.subjects[sub].wrong + result.subjects[sub].unattempted > 0))
-                    .map(([sub, data]) => {
-                      const sc = SUBJECT_COLORS[sub] || SUBJECT_COLORS.Other
-                      const total = data.correct + data.wrong + data.unattempted
-                      const pct = total > 0 ? (data.correct / total) * 100 : 0
-                      return (
-                        <div key={sub}>
-                          <div className="flex items-center justify-between mb-1.5">
-                            <div className="flex items-center gap-2">
-                              <div className="w-2 h-2 rounded-full" style={{ background: sc.color }} />
-                              <span className="text-sm font-medium text-white">{sub}</span>
-                            </div>
-                            <div className="flex items-center gap-3 text-xs">
-                              <span className="text-emerald-400">✓ {data.correct}</span>
-                              <span className="text-red-400">✗ {data.wrong}</span>
-                              <span className="font-bold" style={{ color: sc.color }}>{data.score} pts</span>
-                            </div>
-                          </div>
-                          <div className="w-full h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.07)' }}>
-                            <div className="h-full rounded-full transition-all duration-700"
-                              style={{ width: `${pct}%`, background: sc.color }} />
-                          </div>
-                        </div>
-                      )
-                    })}
+            {result.subjectBreakdown?.length > 0 && (
+              <div className="rounded-3xl p-5 animate-fade-up opacity-0"
+                style={{ animationFillMode:'forwards', animationDelay:'180ms', background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.08)' }}>
+                <p className="text-xs text-slate-500 uppercase tracking-widest font-semibold mb-4">Subject Breakdown</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {result.subjectBreakdown.map(s => (
+                    <SubjectCard key={s.subject} subject={s.subject} data={s}/>
+                  ))}
                 </div>
-              </GlassCard>
+              </div>
             )}
 
             {/* Analysis table */}
-            <GlassCard className="overflow-hidden">
-              {/* Table header */}
-              <div className="flex items-center justify-between px-5 py-4"
-                style={{ borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
-                <p className="text-sm font-semibold text-white">Detailed Analysis</p>
-                {/* Filter tabs */}
-                <div className="flex items-center gap-1">
-                  {[
-                    { key: 'all',         label: `All (${result.analysis.length})` },
-                    { key: 'correct',     label: `✓ ${result.correct}` },
-                    { key: 'wrong',       label: `✗ ${result.wrong}` },
-                    { key: 'unattempted', label: `— ${result.unattempted}` },
-                  ].map(tab => (
-                    <button
-                      key={tab.key}
-                      onClick={() => setFilter(tab.key)}
-                      className="px-2.5 py-1 rounded-lg text-xs font-medium transition-all duration-150"
-                      style={{
-                        background: filter === tab.key ? 'rgba(139,92,246,0.2)' : 'transparent',
-                        border: `1px solid ${filter === tab.key ? 'rgba(139,92,246,0.4)' : 'transparent'}`,
-                        color: filter === tab.key ? '#a78bfa' : '#64748b',
-                      }}
-                    >
-                      {tab.label}
+            <div className="rounded-3xl overflow-hidden animate-fade-up opacity-0"
+              style={{ animationFillMode:'forwards', animationDelay:'220ms', background:'rgba(255,255,255,0.02)', border:'1px solid rgba(255,255,255,0.08)' }}>
+              <div className="px-5 py-4 flex flex-wrap items-center justify-between gap-3"
+                style={{ borderBottom:'1px solid rgba(255,255,255,0.07)' }}>
+                <div>
+                  <p className="text-sm font-semibold text-slate-300">Detailed Analysis</p>
+                  <p className="text-xs text-slate-600 mt-0.5">{result.totalParsed} questions parsed</p>
+                </div>
+                <div className="flex gap-1 p-1 rounded-xl" style={{ background:'rgba(255,255,255,0.04)' }}>
+                  {[['all',`All (${result.analysis.length})`],['correct',`✓ ${result.correct}`],['wrong',`✗ ${result.wrong}`],['unattempted',`— ${result.unattempted}`]].map(([key,label]) => (
+                    <button key={key} onClick={() => setActiveTab(key)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+                      style={{ background:activeTab===key?'rgba(255,255,255,0.09)':'transparent', color:activeTab===key?'#e2e8f0':'#64748b' }}>
+                      {label}
                     </button>
                   ))}
                 </div>
               </div>
-
-              {/* Sticky table header */}
-              <div className="overflow-x-auto">
-                <div style={{ maxHeight: '400px', overflowY: 'auto', scrollbarWidth: 'thin' }}>
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr style={{ background: 'rgba(255,255,255,0.04)', position: 'sticky', top: 0, zIndex: 10 }}>
-                        <th className="text-left px-4 py-3 text-slate-500 font-semibold uppercase tracking-wider">#</th>
-                        <th className="text-left px-4 py-3 text-slate-500 font-semibold uppercase tracking-wider">Question ID</th>
-                        <th className="text-left px-4 py-3 text-slate-500 font-semibold uppercase tracking-wider">Your Answer</th>
-                        <th className="text-left px-4 py-3 text-slate-500 font-semibold uppercase tracking-wider">Correct Answer</th>
-                        <th className="text-left px-4 py-3 text-slate-500 font-semibold uppercase tracking-wider">Type</th>
-                        <th className="text-left px-4 py-3 text-slate-500 font-semibold uppercase tracking-wider">Status</th>
-                        <th className="text-right px-4 py-3 text-slate-500 font-semibold uppercase tracking-wider">Marks</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredAnalysis.map((q, i) => {
-                        const marks = q.status === 'correct' ? '+4'
-                          : q.status === 'wrong' && q.questionType === 'mcq' ? '-1' : '0'
-                        const marksColor = q.status === 'correct' ? '#10b981'
-                          : q.status === 'wrong' && q.questionType === 'mcq' ? '#ef4444' : '#64748b'
-
-                        return (
-                          <tr
-                            key={q.questionId}
-                            style={{
-                              background: RowBackground[q.status],
-                              borderBottom: '1px solid rgba(255,255,255,0.04)',
-                            }}
-                          >
-                            <td className="px-4 py-3 text-slate-600 font-mono">{i + 1}</td>
-                            <td className="px-4 py-3 font-mono text-slate-300">{q.questionId}</td>
-                            <td className="px-4 py-3 font-mono text-slate-400">
-                              {q.chosenOptionId || <span className="text-slate-600 italic">—</span>}
-                            </td>
-                            <td className="px-4 py-3 font-mono text-emerald-400">{q.correctOptionId}</td>
-                            <td className="px-4 py-3">
-                              <span className="px-1.5 py-0.5 rounded text-slate-500 uppercase text-xs"
-                                style={{ background: 'rgba(255,255,255,0.05)' }}>
-                                {q.questionType === 'numerical' ? 'NUM' : 'MCQ'}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3"><StatusBadge status={q.status} /></td>
-                            <td className="px-4 py-3 text-right font-bold font-mono" style={{ color: marksColor }}>
-                              {marks}
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-
-                  {filteredAnalysis.length === 0 && (
-                    <div className="text-center py-10 text-slate-600 text-sm">
-                      No questions match this filter.
-                    </div>
-                  )}
-                </div>
+              <div className="overflow-auto max-h-[60vh]" style={{ scrollbarWidth:'thin' }}>
+                <table className="w-full text-left" style={{ borderCollapse:'collapse' }}>
+                  <thead>
+                    <tr style={{ background:'rgba(255,255,255,0.04)', position:'sticky', top:0, zIndex:10 }}>
+                      {['#','Question ID','Subject','Your Answer','Correct Answer','Status','Marks'].map(h => (
+                        <th key={h} className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.length === 0
+                      ? <tr><td colSpan={7} className="text-center py-10 text-slate-600 text-sm">No questions in this category</td></tr>
+                      : filtered.map((item, i) => <AnalysisRow key={item.questionId} item={item} index={i}/>)
+                    }
+                  </tbody>
+                </table>
               </div>
-            </GlassCard>
-
-            {/* Recalculate */}
-            <div className="text-center">
-              <button
-                onClick={() => { setResult(null); setError(''); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
-                className="text-xs text-slate-600 hover:text-slate-400 transition-colors py-2 px-5 rounded-xl"
-                style={{ border: '1px solid rgba(255,255,255,0.07)' }}
-              >
-                ↺ Calculate Another
-              </button>
             </div>
+
+            <button
+              onClick={() => { setResult(null); setUrl(''); setDate(''); setShift(''); window.scrollTo({ top:0, behavior:'smooth' }) }}
+              className="w-full py-3 rounded-2xl text-sm text-slate-500 hover:text-slate-300 transition-colors"
+              style={{ border:'1px solid rgba(255,255,255,0.07)' }}>
+              ← Calculate Another Score
+            </button>
           </div>
         )}
       </div>
     </div>
   )
 }
-
-export default ScoreCalculatorPage
