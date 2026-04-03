@@ -1,6 +1,6 @@
 // api/calculate-score.js
 // Vercel serverless function
-// npm install node-html-parser @supabase/supabase-js
+// npm install @supabase/supabase-js node-html-parser
 
 import { createClient } from '@supabase/supabase-js'
 import { parse } from 'node-html-parser'
@@ -10,17 +10,30 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 )
 
-// ─── PARSER ─────────────────────────────────────────────────────────────────
-// Based on actual Digialm HTML structure:
-// Each question lives inside a <table class="menu-tbl">
-//   Row 1 col 2: Question Type  ("MCQ" | "SA")
-//   Row 2 col 2: Question ID    (e.g. "603421752")
-//   Row 3 col 2: Option 1 ID    (e.g. "6034212556")   ← MCQ only
-//   Row 4 col 2: Option 2 ID
-//   Row 5 col 2: Option 3 ID
-//   Row 6 col 2: Option 4 ID
-//   Last row col 2: Chosen option NUMBER ("1"/"2"/"3"/"4" or "--")
-//                   For SA (numerical): the numeric answer directly, or "--"
+// ─── PARSER ──────────────────────────────────────────────────────────────────
+// Based on the REAL Digialm HTML structure (verified from live response sheet):
+//
+// Each question lives inside <table class="menu-tbl"> with td pairs:
+//   <td align="right">Question Type :</td><td class="bold">MCQ</td>
+//   <td align="right">Question ID :</td><td class="bold">8606541685</td>
+//   <td align="right">Option 1 ID :</td><td class="bold">8606545733</td>
+//   <td align="right">Option 2 ID :</td><td class="bold">8606545735</td>
+//   <td align="right">Option 3 ID :</td><td class="bold">8606545734</td>
+//   <td align="right">Option 4 ID :</td><td class="bold">8606545732</td>
+//   <td>Status :</td><td>Answered</td>
+//   <td>Chosen Option :</td><td class="bold">2</td>   ← NUMBER not ID
+//
+// For SA (numerical):
+//   <td align="right">Question Type :</td><td class="bold">SA</td>
+//   <td align="right">Question ID :</td><td class="bold">8606541698</td>
+//   <td align="right">Given Answer :</td><td class="bold">314</td>
+//
+// KEY INSIGHT for MCQ:
+//   "Chosen Option: 2" means the student picked option #2
+//   We must look up "Option 2 ID" to get the actual option ID to compare with answer key
+//
+// KEY INSIGHT for SA:
+//   "Given Answer: 314" IS the answer — compare directly with correct_option_id in DB
 
 function parseDigialmHTML(html) {
   const root = parse(html)
@@ -29,37 +42,42 @@ function parseDigialmHTML(html) {
   const tables = root.querySelectorAll('table.menu-tbl')
 
   for (const table of tables) {
-    const rows = table.querySelectorAll('tr')
-    if (rows.length < 3) continue
+    const tableHTML = table.innerHTML
 
-    // Helper: get text of .bold cell in a row
-    const boldText = (row) => {
-      const cell = row.querySelector('td.bold')
-      return cell ? cell.text.trim() : ''
+    // Helper: extract value for a label using regex on this table's HTML
+    const extract = (label) => {
+      // Matches: ">Label :</td><td...>VALUE</td>" with optional spaces
+      const re = new RegExp(
+        label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
+        '\\s*:</td><td[^>]*>([^<]+)',
+        'i'
+      )
+      return tableHTML.match(re)?.[1]?.trim() ?? null
     }
 
-    const questionType = boldText(rows[0])   // "MCQ" or "SA"
-    const questionId   = boldText(rows[1])   // e.g. "603421752"
+    const questionType = extract('Question Type')   // "MCQ" or "SA"
+    const questionId   = extract('Question ID')     // e.g. "8606541685"
 
     if (!questionId || !/^\d+$/.test(questionId)) continue
-
-    const lastRow     = rows[rows.length - 1]
-    const chosenRaw   = boldText(lastRow)    // "1","2","3","4", "--", or numeric answer
 
     let chosenOptionId = null
 
     if (questionType === 'MCQ') {
-      // chosenRaw is the option NUMBER (1-4), not the ID
-      if (chosenRaw && chosenRaw !== '--' && /^[1-4]$/.test(chosenRaw)) {
-        const optionRowIndex = 2 + parseInt(chosenRaw) - 1  // rows[2] = opt1, rows[3] = opt2 ...
-        if (rows[optionRowIndex]) {
-          chosenOptionId = boldText(rows[optionRowIndex])  // actual option ID
-        }
+      const opt1   = extract('Option 1 ID')
+      const opt2   = extract('Option 2 ID')
+      const opt3   = extract('Option 3 ID')
+      const opt4   = extract('Option 4 ID')
+      const chosen = extract('Chosen Option')   // "1", "2", "3", "4", or "--"
+
+      if (chosen && chosen !== '--' && /^[1-4]$/.test(chosen)) {
+        const optMap = { '1': opt1, '2': opt2, '3': opt3, '4': opt4 }
+        chosenOptionId = optMap[chosen] ?? null
       }
     } else {
-      // SA / Numerical — the chosen value is the answer itself (e.g. "42" or "--")
-      if (chosenRaw && chosenRaw !== '--') {
-        chosenOptionId = chosenRaw  // store the numeric answer string directly
+      // SA / Numerical — "Given Answer" is the actual answer value
+      const givenAnswer = extract('Given Answer')   // e.g. "314", "4", or "--"
+      if (givenAnswer && givenAnswer !== '--') {
+        chosenOptionId = givenAnswer   // store as string; compare with DB correct_option_id
       }
     }
 
@@ -73,14 +91,13 @@ function parseDigialmHTML(html) {
   return questions
 }
 
-// ─── SCORER ─────────────────────────────────────────────────────────────────
+// ─── SCORER ──────────────────────────────────────────────────────────────────
 function calculateScore(parsedQuestions, answerKey) {
-  // Build lookup map
   const keyMap = {}
   for (const k of answerKey) {
     keyMap[k.question_id] = {
       correctOptionId: k.correct_option_id,
-      type: k.question_type,
+      type:    k.question_type,
       subject: k.subject,
     }
   }
@@ -88,14 +105,14 @@ function calculateScore(parsedQuestions, answerKey) {
   let score = 0, correct = 0, wrong = 0, unattempted = 0
   const analysis = []
 
-  // Subject by position fallback (if subject not in answer key)
-  const subjectByIndex = (i) => i < 25 ? 'Physics' : i < 50 ? 'Chemistry' : 'Mathematics'
+  const subjectByIndex = (i) =>
+    i < 25 ? 'Physics' : i < 50 ? 'Chemistry' : 'Mathematics'
 
   parsedQuestions.forEach((q, idx) => {
     const key = keyMap[q.questionId]
+    const subject = key?.subject || subjectByIndex(idx)
 
     if (!key) {
-      // Not in answer key — might be a question the key hasn't been entered for
       unattempted++
       analysis.push({
         questionId:      q.questionId,
@@ -104,12 +121,11 @@ function calculateScore(parsedQuestions, answerKey) {
         type:            q.questionType,
         status:          'unknown',
         marks:           0,
-        subject:         subjectByIndex(idx),
+        subject,
       })
       return
     }
 
-    const subject = key.subject || subjectByIndex(idx)
     let status, marks
 
     if (!q.chosenOptionId) {
@@ -138,7 +154,6 @@ function calculateScore(parsedQuestions, answerKey) {
     ? Math.round((correct / (correct + wrong)) * 100)
     : 0
 
-  // Subject breakdown
   const subjects = ['Physics', 'Chemistry', 'Mathematics']
   const subjectBreakdown = subjects.map(sub => {
     const qs = analysis.filter(a => a.subject === sub)
@@ -174,11 +189,10 @@ export default async function handler(req, res) {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
       },
       signal: AbortSignal.timeout(20000),
     })
-    if (!resp.ok) throw new Error(`HTTP ${resp.status} — response sheet URL may have expired`)
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} — URL may have expired`)
     html = await resp.text()
   } catch (err) {
     return res.status(502).json({ error: `Could not fetch response sheet: ${err.message}` })
@@ -189,15 +203,13 @@ export default async function handler(req, res) {
   try {
     parsedQuestions = parseDigialmHTML(html)
   } catch (err) {
-    return res.status(422).json({ error: `HTML parsing error: ${err.message}` })
+    return res.status(422).json({ error: `Parsing error: ${err.message}` })
   }
 
   if (parsedQuestions.length === 0) {
-    // Return debug info to help diagnose format differences
-    const snippet = html.slice(0, 500).replace(/\s+/g, ' ')
     return res.status(422).json({
-      error: 'No questions found in response sheet. The URL may be expired or the format is unexpected.',
-      debug: snippet,
+      error: 'No questions found. The URL may have expired or the format changed.',
+      hint: 'Try re-downloading your response sheet link from the NTA portal.',
     })
   }
 
@@ -217,7 +229,7 @@ export default async function handler(req, res) {
       parsedCount: parsedQuestions.length,
     })
 
-  // ── Calculate ───────────────────────────────────────────────
+  // ── Score ───────────────────────────────────────────────────
   const result = calculateScore(parsedQuestions, answerKey)
 
   return res.status(200).json({
