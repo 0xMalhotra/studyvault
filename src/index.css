@@ -1,0 +1,120 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-primary: #080b14;
+    --bg-secondary: #0d1120;
+    --accent-physics: #3b82f6;
+    --accent-chemistry: #10b981;
+    --accent-maths: #f59e0b;
+    --glass-bg: rgba(255, 255, 255, 0.04);
+    --glass-border: rgba(255, 255, 255, 0.09);
+    --glass-hover: rgba(255, 255, 255, 0.08);
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--bg-primary);
+    color: #e2e8f0;
+    font-family: 'DM Sans', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background: rgba(59, 130, 246, 0.3);
+    color: #fff;
+  }
+
+  ::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #0d1120;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 10px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.25);
+  }
+}
+
+@layer components {
+  .glass-card {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 20px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .glass-card:hover {
+    background: var(--glass-hover);
+    border-color: rgba(255, 255, 255, 0.16);
+    transform: translateY(-4px);
+    box-shadow:
+      0 20px 60px rgba(0, 0, 0, 0.4),
+      0 0 0 1px rgba(255,255,255,0.05) inset;
+  }
+
+  .glass-card-static {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 20px;
+  }
+
+  .shimmer-text {
+    background: linear-gradient(
+      90deg,
+      #e2e8f0 0%,
+      #fff 40%,
+      #94a3b8 60%,
+      #e2e8f0 100%
+    );
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: shimmer 3s linear infinite;
+  }
+
+  .orb {
+    position: fixed;
+    border-radius: 50%;
+    filter: blur(80px);
+    pointer-events: none;
+    z-index: 0;
+    animation: pulseGlow 4s ease-in-out infinite;
+  }
+
+  .stagger-1  { animation-delay: 0.05s; }
+  .stagger-2  { animation-delay: 0.10s; }
+  .stagger-3  { animation-delay: 0.15s; }
+  .stagger-4  { animation-delay: 0.20s; }
+  .stagger-5  { animation-delay: 0.25s; }
+  .stagger-6  { animation-delay: 0.30s; }
+  .stagger-7  { animation-delay: 0.35s; }
+  .stagger-8  { animation-delay: 0.40s; }
+  .stagger-9  { animation-delay: 0.45s; }
+  .stagger-10 { animation-delay: 0.50s; }
+}
