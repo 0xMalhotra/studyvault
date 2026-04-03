@@ -1,6 +1,5 @@
 // api/calculate-score.js
-// Vercel serverless function
-// npm install @supabase/supabase-js node-html-parser
+export const maxDuration = 60; // Tells Vercel to allow up to 60 seconds execution
 
 import { createClient } from '@supabase/supabase-js'
 import { parse } from 'node-html-parser'
@@ -11,30 +10,6 @@ const supabase = createClient(
 )
 
 // ─── PARSER ──────────────────────────────────────────────────────────────────
-// Based on the REAL Digialm HTML structure (verified from live response sheet):
-//
-// Each question lives inside <table class="menu-tbl"> with td pairs:
-//   <td align="right">Question Type :</td><td class="bold">MCQ</td>
-//   <td align="right">Question ID :</td><td class="bold">8606541685</td>
-//   <td align="right">Option 1 ID :</td><td class="bold">8606545733</td>
-//   <td align="right">Option 2 ID :</td><td class="bold">8606545735</td>
-//   <td align="right">Option 3 ID :</td><td class="bold">8606545734</td>
-//   <td align="right">Option 4 ID :</td><td class="bold">8606545732</td>
-//   <td>Status :</td><td>Answered</td>
-//   <td>Chosen Option :</td><td class="bold">2</td>   ← NUMBER not ID
-//
-// For SA (numerical):
-//   <td align="right">Question Type :</td><td class="bold">SA</td>
-//   <td align="right">Question ID :</td><td class="bold">8606541698</td>
-//   <td align="right">Given Answer :</td><td class="bold">314</td>
-//
-// KEY INSIGHT for MCQ:
-//   "Chosen Option: 2" means the student picked option #2
-//   We must look up "Option 2 ID" to get the actual option ID to compare with answer key
-//
-// KEY INSIGHT for SA:
-//   "Given Answer: 314" IS the answer — compare directly with correct_option_id in DB
-
 function parseDigialmHTML(html) {
   const root = parse(html)
   const questions = []
@@ -42,15 +17,15 @@ function parseDigialmHTML(html) {
   const tables = root.querySelectorAll('table.menu-tbl')
 
   for (const table of tables) {
-    // ─── ROBUST DOM EXTRACTION ──────────────────────────────────────
-    // Instead of regex, iterate through the <td> elements directly. 
-    // This ignores all weird HTML spacing/newlines inside the tags.
+    // OPTIMIZATION: Query TDs only once per table to prevent Vercel memory crashes
+    const tds = table.querySelectorAll('td')
+    
     const extract = (label) => {
-      const tds = table.querySelectorAll('td')
       for (let i = 0; i < tds.length - 1; i++) {
-        const cellText = tds[i].text.replace(/&nbsp;/g, ' ').trim()
+        // SAFE FALLBACK: Use textContent and fallback to empty string if missing
+        const cellText = (tds[i].textContent || '').replace(/&nbsp;/g, ' ').trim()
         if (cellText.includes(label)) {
-          const val = tds[i + 1].text.replace(/&nbsp;/g, ' ').trim()
+          const val = (tds[i + 1].textContent || '').replace(/&nbsp;/g, ' ').trim()
           return val === '' ? null : val
         }
       }
@@ -79,8 +54,8 @@ function parseDigialmHTML(html) {
       // SA / Numerical 
       const givenAnswer = extract('Given Answer') ?? extract('Chosen Option')
 
-      if (givenAnswer && givenAnswer !== '--' && givenAnswer.trim() !== '') {
-        chosenOptionId = givenAnswer.trim()
+      if (givenAnswer && givenAnswer !== '--' && givenAnswer !== '') {
+        chosenOptionId = givenAnswer
       }
     }
 
@@ -129,18 +104,18 @@ function calculateScore(parsedQuestions, answerKey) {
       return
     }
 
-   let status, marks
+    let status, marks
 
-    // Clean up strings to avoid invisible spacing issues
+    // Ensure clean strings for direct comparison
     const chosen = q.chosenOptionId ? String(q.chosenOptionId).trim() : null;
-    const correct = key.correctOptionId ? String(key.correctOptionId).trim() : null;
+    const correctAns = key.correctOptionId ? String(key.correctOptionId).trim() : null;
 
     if (!chosen) {
       status = 'unattempted'; marks = 0; unattempted++
     } else if (
-      chosen === correct || 
-      // Numeric fallback: safely catches "05" == "5" or "314.0" == "314"
-      (key.type === 'numerical' && Number(chosen) === Number(correct))
+      chosen === correctAns || 
+      // Safely catch numeric equivalents like "05" == "5"
+      (key.type === 'numerical' && Number(chosen) === Number(correctAns))
     ) {
       status = 'correct'; marks = 4; score += 4; correct++
     } else {
@@ -198,10 +173,10 @@ export default async function handler(req, res) {
   try {
     const resp = await fetch(responseSheetUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       },
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(50000), // Wait up to 50s for Digialm
     })
     if (!resp.ok) throw new Error(`HTTP ${resp.status} — URL may have expired`)
     html = await resp.text()
