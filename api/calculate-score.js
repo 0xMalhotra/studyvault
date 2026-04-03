@@ -44,12 +44,14 @@ function parseDigialmHTML(html) {
   for (const table of tables) {
     const tableHTML = table.innerHTML
 
-    // Helper: extract value for a label using regex on this table's HTML
+    // Helper: extract value for a label in this table's HTML.
+    // Uses \\s* around the value cell to handle whitespace/newlines Digialm
+    // sometimes inserts between closing </td> and the value — which caused
+    // [^<]+ to fail for SA "Given Answer" fields.
     const extract = (label) => {
-      // Matches: ">Label :</td><td...>VALUE</td>" with optional spaces
+      const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       const re = new RegExp(
-        label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') +
-        '\\s*:</td><td[^>]*>([^<]+)',
+        escaped + '\\s*:</td>\\s*<td[^>]*>\\s*([^<\\s][^<]*?)\\s*</td>',
         'i'
       )
       return tableHTML.match(re)?.[1]?.trim() ?? null
@@ -74,10 +76,15 @@ function parseDigialmHTML(html) {
         chosenOptionId = optMap[chosen] ?? null
       }
     } else {
-      // SA / Numerical — "Given Answer" is the actual answer value
-      const givenAnswer = extract('Given Answer')   // e.g. "314", "4", or "--"
-      if (givenAnswer && givenAnswer !== '--') {
-        chosenOptionId = givenAnswer   // store as string; compare with DB correct_option_id
+      // SA / Numerical — Digialm uses "Given Answer" label.
+      // Try "Chosen Option" as a fallback for older Digialm sheet formats
+      // that reuse the same label for SA questions.
+      const givenAnswer =
+        extract('Given Answer') ??
+        extract('Chosen Option')
+
+      if (givenAnswer && givenAnswer !== '--' && givenAnswer !== '') {
+        chosenOptionId = givenAnswer.trim()
       }
     }
 
