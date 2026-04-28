@@ -1,4 +1,10 @@
+import QuestionContent from './QuestionContent'
+
 const LABELS = ['A', 'B', 'C', 'D']
+
+function hasHtml(value) {
+  return typeof value === 'string' && /<\/?[a-z][\s\S]*>/i.test(value)
+}
 
 // mode: 'practice' | 'pyq-active' | 'pyq-result'
 const OptionButton = ({
@@ -10,8 +16,9 @@ const OptionButton = ({
   accentColor = '#3b82f6',
   onClick,
 }) => {
-  const isSelected  = selected === opt
-  const isCorrect   = opt === correctAnswer
+  const optionValue = opt ?? ''
+  const isSelected  = selected === optionValue
+  const isCorrect   = optionValue === correctAnswer
   const isAnswered  = selected !== null && selected !== undefined
 
   let bg, border, text, labelColor
@@ -56,7 +63,7 @@ const OptionButton = ({
 
   return (
     <button
-      onClick={() => !locked && onClick?.(opt)}
+      onClick={() => !locked && onClick?.(optionValue)}
       disabled={locked}
       className="w-full text-left flex items-center gap-3 px-4 py-3 rounded-2xl transition-all duration-200"
       style={{ background: bg, border: `1px solid ${border}`, cursor: locked ? 'default' : 'pointer' }}
@@ -73,7 +80,9 @@ const OptionButton = ({
       >
         {LABELS[index]}
       </span>
-      <span className="text-sm flex-1" style={{ color: text }}>{opt}</span>
+      <div className="text-sm flex-1 min-w-0" style={{ color: text }}>
+        {hasHtml(optionValue) ? <QuestionContent html={optionValue} /> : optionValue}
+      </div>
       {mode !== 'pyq-active' && isAnswered && isCorrect && (
         <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="#10b981" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />

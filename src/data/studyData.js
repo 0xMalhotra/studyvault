@@ -14,11 +14,11 @@ export const subjects = [
     accentBorder: "border-blue-500/30",
     chapters: [
       {
-        id: "units-measurements",
-        name: "Units & Measurements",
+        id: "units-measurements-and-errors",
+        name: "Units, Measurements and Errors",
         icon: "📏",
         description: "Dimensional analysis, errors and instruments",
-        questionCount: 194,
+        questionCount: unitsQuestions.length,
         questions: unitsQuestions,
       },
       {

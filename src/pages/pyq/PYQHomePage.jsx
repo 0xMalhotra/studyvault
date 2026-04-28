@@ -1,167 +1,176 @@
-import { useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
-import { pyqData } from '../../data/pyqData'
+import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { supabase } from '../../lib/supabase'
 
 const PYQHomePage = () => {
   const navigate = useNavigate()
-  const [selectedYear, setSelectedYear]       = useState(null)
-  const [selectedAttempt, setSelectedAttempt] = useState(null)
-  const [selectedShift, setSelectedShift]     = useState(null)
+  const [papers, setPapers]   = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError]     = useState(null)
 
-  const yearData    = pyqData.find(y => y.year === selectedYear)
-  const attemptData = yearData?.attempts.find(a => a.id === selectedAttempt)
+  useEffect(() => {
+    const fetchPapers = async () => {
+      const { data, error } = await supabase
+        .from('papers')
+        .select('*')
+        .eq('is_active', true)
+        .order('exam_date', { ascending: false })
 
-  const canStart = selectedYear && selectedAttempt && selectedShift
+      if (error) { setError(error.message); setLoading(false); return }
 
-  const handleStart = () => {
-    if (!canStart) return
-    // Encode selection in URL
-    navigate(`/pyq/test/${selectedAttempt}/${selectedShift}`)
-  }
+      // Group: year → attempt → shifts
+      const grouped = {}
+      for (const p of data) {
+        if (!grouped[p.year]) grouped[p.year] = {}
+        if (!grouped[p.year][p.attempt]) grouped[p.year][p.attempt] = []
+        grouped[p.year][p.attempt].push(p)
+      }
 
-  const Chip = ({ label, active, color = '#3b82f6', onClick }) => (
-    <button
-      onClick={onClick}
-      className="px-4 py-2.5 rounded-2xl text-sm font-medium transition-all duration-200"
-      style={{
-        background: active ? `${color}20` : 'rgba(255,255,255,0.04)',
-        border: `1px solid ${active ? color : 'rgba(255,255,255,0.09)'}`,
-        color: active ? color : '#64748b',
-        transform: active ? 'scale(1.02)' : 'scale(1)',
-      }}
-    >
-      {label}
-    </button>
+      // Convert to array sorted by year desc
+      const structured = Object.entries(grouped)
+        .sort(([a], [b]) => b - a)
+        .map(([year, attempts]) => ({
+          year,
+          attempts: Object.entries(attempts).map(([attemptLabel, shifts]) => ({
+            id:     `${year}-${attemptLabel}`,
+            label:  attemptLabel,
+            shifts: shifts.sort((a, b) =>
+              new Date(a.exam_date) - new Date(b.exam_date) ||
+              a.shift.localeCompare(b.shift)
+            ),
+          })),
+        }))
+
+      setPapers(structured)
+      setLoading(false)
+    }
+
+    fetchPapers()
+  }, [])
+
+  if (loading) return (
+    <div className="relative z-10 pt-28 flex items-center justify-center min-h-screen">
+      <div className="text-center">
+        <div className="w-8 h-8 border-2 border-amber-500/30 border-t-amber-500 rounded-full animate-spin mx-auto mb-3" />
+        <p className="text-slate-500 text-sm">Loading papers…</p>
+      </div>
+    </div>
+  )
+
+  if (error) return (
+    <div className="relative z-10 pt-28 text-center text-red-400 text-sm">
+      Failed to load papers: {error}
+    </div>
   )
 
   return (
-    <div className="relative z-10 min-h-screen px-6 pb-16 pt-28">
-      <div className="max-w-2xl mx-auto">
-        {/* Breadcrumb */}
-        <div className="flex items-center gap-2 text-xs text-slate-600 mb-8 animate-fade-in opacity-0"
-          style={{ animationFillMode: 'forwards' }}>
-          <Link to="/" className="hover:text-slate-400 transition-colors">Home</Link>
-          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-          <span className="text-amber-400">PYQ Mode</span>
-        </div>
+    <div className="relative z-10 min-h-screen px-4 pb-16 pt-24">
+      <div className="max-w-4xl mx-auto">
 
         {/* Header */}
-        <div className="mb-8 animate-fade-up opacity-0" style={{ animationFillMode: 'forwards', animationDelay: '0.05s' }}>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-10 h-10 rounded-2xl flex items-center justify-center text-xl"
-              style={{ background: 'rgba(245,158,11,0.15)', border: '1px solid rgba(245,158,11,0.3)' }}>
-              🗓️
-            </div>
-            <div>
-              <h1 className="font-display text-2xl font-extrabold text-white tracking-tight">PYQ Mode</h1>
-              <p className="text-slate-500 text-sm">JEE Main — Full 75-question test with 3-hour timer</p>
-            </div>
+        <div className="text-center mb-10 animate-fade-up opacity-0" style={{ animationFillMode: 'forwards' }}>
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-semibold mb-5"
+            style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', color: '#f59e0b' }}>
+            <div className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+            JEE Main PYQ Papers
           </div>
+          <h1 className="font-display text-4xl font-extrabold text-white tracking-tight mb-3">
+            Previous Year <span style={{ color: '#f59e0b' }}>Papers</span>
+          </h1>
+          <p className="text-slate-400 text-sm max-w-md mx-auto">
+            Full papers with Physics, Chemistry & Mathematics — timed exam mode
+          </p>
         </div>
 
-        {/* Step 1: Year */}
-        <div className="glass-card-static p-6 mb-4 animate-fade-up opacity-0 stagger-1"
-          style={{ animationFillMode: 'forwards' }}>
-          <div className="flex items-center gap-2 mb-4">
-            <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
-              style={{ background: 'rgba(245,158,11,0.2)', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.3)' }}>1</div>
-            <span className="text-sm font-semibold text-white">Select Year</span>
+        {papers.length === 0 ? (
+          <div className="text-center py-16 text-slate-500 text-sm">
+            No papers available yet. Add papers to the Supabase <code>papers</code> table.
           </div>
-          <div className="flex flex-wrap gap-2">
-            {pyqData.map(y => (
-              <Chip
-                key={y.year}
-                label={y.year}
-                active={selectedYear === y.year}
-                color="#f59e0b"
-                onClick={() => { setSelectedYear(y.year); setSelectedAttempt(null); setSelectedShift(null) }}
-              />
-            ))}
-          </div>
-        </div>
+        ) : (
+          <div className="space-y-8">
+            {papers.map(({ year, attempts }) => (
+              <div key={year}>
+                {/* Year heading */}
+                <div className="flex items-center gap-3 mb-4">
+                  <h2 className="font-display text-xl font-bold text-white">{year}</h2>
+                  <div className="flex-1 h-px" style={{ background: 'rgba(255,255,255,0.07)' }} />
+                  <span className="text-xs text-slate-600">
+                    {attempts.reduce((n, a) => n + a.shifts.length, 0)} shifts
+                  </span>
+                </div>
 
-        {/* Step 2: Attempt */}
-        <div
-          className="glass-card-static p-6 mb-4 animate-fade-up opacity-0 stagger-2 transition-all duration-300"
-          style={{ animationFillMode: 'forwards', opacity: selectedYear ? undefined : 0.4, pointerEvents: selectedYear ? 'auto' : 'none' }}
-        >
-          <div className="flex items-center gap-2 mb-4">
-            <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
-              style={{ background: 'rgba(59,130,246,0.2)', color: '#3b82f6', border: '1px solid rgba(59,130,246,0.3)' }}>2</div>
-            <span className="text-sm font-semibold text-white">Select Attempt</span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {(yearData?.attempts || []).map(a => (
-              <Chip
-                key={a.id}
-                label={a.label}
-                active={selectedAttempt === a.id}
-                color="#3b82f6"
-                onClick={() => { setSelectedAttempt(a.id); setSelectedShift(null) }}
-              />
-            ))}
-            {!selectedYear && <span className="text-xs text-slate-600 italic">Select a year first</span>}
-          </div>
-        </div>
+                {attempts.map(attempt => (
+                  <div key={attempt.id} className="mb-5">
+                    {/* Attempt label */}
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-3 ml-1">
+                      {attempt.label}
+                    </p>
 
-        {/* Step 3: Shift */}
-        <div
-          className="glass-card-static p-6 mb-6 animate-fade-up opacity-0 stagger-3 transition-all duration-300"
-          style={{ animationFillMode: 'forwards', opacity: selectedAttempt ? undefined : 0.4, pointerEvents: selectedAttempt ? 'auto' : 'none' }}
-        >
-          <div className="flex items-center gap-2 mb-4">
-            <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold"
-              style={{ background: 'rgba(16,185,129,0.2)', color: '#10b981', border: '1px solid rgba(16,185,129,0.3)' }}>3</div>
-            <span className="text-sm font-semibold text-white">Select Shift</span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {(attemptData?.shifts || []).map(s => (
-              <Chip
-                key={s.id}
-                label={s.label}
-                active={selectedShift === s.id}
-                color="#10b981"
-                onClick={() => setSelectedShift(s.id)}
-              />
-            ))}
-            {!selectedAttempt && <span className="text-xs text-slate-600 italic">Select an attempt first</span>}
-          </div>
-        </div>
+                    {/* Shift cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {attempt.shifts.map(paper => {
+                        const shiftColor = paper.shift === 'Morning' ? '#3b82f6' : '#8b5cf6'
+                        const date = new Date(paper.exam_date).toLocaleDateString('en-IN', {
+                          day: 'numeric', month: 'short', year: 'numeric'
+                        })
 
-        {/* Start button */}
-        <div className="animate-fade-up opacity-0 stagger-4" style={{ animationFillMode: 'forwards' }}>
-          {/* Info strip */}
-          <div className="flex items-center gap-6 mb-4 px-2">
-            {[
-              { icon: '⏱️', text: '3 Hours' },
-              { icon: '📝', text: '75 Questions' },
-              { icon: '🎯', text: '+4 / -1 Marking' },
-            ].map(({ icon, text }) => (
-              <div key={text} className="flex items-center gap-1.5 text-xs text-slate-500">
-                <span>{icon}</span>
-                <span>{text}</span>
+                        return (
+                          <button
+                            key={paper.id}
+                            onClick={() => navigate(`/pyq/test/${paper.id}`)}
+                            className="glass-card p-5 text-left group transition-all duration-200"
+                            onMouseEnter={e => {
+                              e.currentTarget.style.boxShadow = `0 16px 48px ${shiftColor}22`
+                              e.currentTarget.style.borderColor = shiftColor + '44'
+                            }}
+                            onMouseLeave={e => {
+                              e.currentTarget.style.boxShadow = ''
+                              e.currentTarget.style.borderColor = ''
+                            }}
+                          >
+                            <div className="flex items-start justify-between">
+                              <div className="flex items-center gap-2.5 mb-3">
+                                <div className="w-8 h-8 rounded-xl flex items-center justify-center text-sm"
+                                  style={{ background: `${shiftColor}18`, border: `1px solid ${shiftColor}28` }}>
+                                  {paper.shift === 'Morning' ? '🌅' : '🌆'}
+                                </div>
+                                <div>
+                                  <p className="text-sm font-semibold text-white">{paper.shift} Shift</p>
+                                  <p className="text-xs text-slate-500">{date}</p>
+                                </div>
+                              </div>
+                              <svg className="w-4 h-4 text-slate-600 group-hover:text-slate-300 transition-colors mt-1"
+                                fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                              </svg>
+                            </div>
+
+                            <div className="flex gap-2 mt-2">
+                              {['Physics', 'Chemistry', 'Maths'].map((s, i) => (
+                                <span key={s} className="text-xs px-2 py-0.5 rounded-full"
+                                  style={{
+                                    background: ['rgba(59,130,246,0.1)','rgba(16,185,129,0.1)','rgba(245,158,11,0.1)'][i],
+                                    color: ['#60a5fa','#34d399','#fbbf24'][i],
+                                    border: `1px solid ${['rgba(59,130,246,0.2)','rgba(16,185,129,0.2)','rgba(245,158,11,0.2)'][i]}`
+                                  }}>
+                                  {s}
+                                </span>
+                              ))}
+                              <span className="text-xs px-2 py-0.5 rounded-full ml-auto"
+                                style={{ background: 'rgba(255,255,255,0.05)', color: '#64748b' }}>
+                                75 Qs
+                              </span>
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
               </div>
             ))}
           </div>
-
-          <button
-            onClick={handleStart}
-            disabled={!canStart}
-            className="w-full py-4 rounded-2xl text-base font-bold transition-all duration-300"
-            style={{
-              background: canStart
-                ? 'linear-gradient(135deg, #f59e0b, #ef4444)'
-                : 'rgba(255,255,255,0.05)',
-              color: canStart ? '#fff' : '#475569',
-              cursor: canStart ? 'pointer' : 'not-allowed',
-              boxShadow: canStart ? '0 8px 30px rgba(245,158,11,0.3)' : 'none',
-            }}
-          >
-            {canStart ? '🚀 Start Full Test' : 'Complete Selection Above'}
-          </button>
-        </div>
+        )}
       </div>
     </div>
   )

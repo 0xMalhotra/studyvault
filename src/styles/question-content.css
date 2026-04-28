@@ -1,0 +1,87 @@
+.question-html-content {
+  color: inherit;
+  font-size: inherit;
+  line-height: 1.7;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.question-html-content p {
+  margin: 0.45rem 0;
+}
+
+button .question-html-content p {
+  margin: 0;
+}
+
+.question-html-content mjx-container,
+.question-html-content svg {
+  max-width: 100%;
+}
+
+.question-html-content mjx-container {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.question-html-content mjx-container svg {
+  display: inline-block;
+  fill: currentColor;
+  stroke: currentColor;
+}
+
+.question-html-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.25rem 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+}
+
+.question-html-content table th {
+  padding: 10px 14px;
+  color: #ffffff;
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-align: center;
+  background: linear-gradient(135deg, #3730a3 0%, #2563eb 100%);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.question-html-content table td {
+  padding: 9px 14px;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 0.9rem;
+  text-align: center;
+  vertical-align: middle;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.question-html-content table tbody tr:nth-child(odd) {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.question-html-content table tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.question-html-content table tbody tr:hover {
+  background: rgba(99, 102, 241, 0.15);
+}
+
+.question-html-content table td:first-child,
+.question-html-content table th:first-child {
+  padding-left: 18px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.question-html-content img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1rem auto;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+}

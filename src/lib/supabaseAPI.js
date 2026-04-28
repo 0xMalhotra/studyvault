@@ -1,9 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-);
+import { supabase } from './supabase';
 
 // 1. Fetch for PYQ Mode (By Paper)
 export async function fetchFullPaper(examDate, shift) {
@@ -11,7 +6,7 @@ export async function fetchFullPaper(examDate, shift) {
     .from('questions')
     .select('*')
     .eq('exam_date', examDate)
-    .eq('shift', shift);
+    .eq('source_shift', shift);
 
   if (error) {
     console.error("Error fetching paper:", error);
@@ -25,9 +20,9 @@ export async function fetchPracticeQuestions(subject, chapter) {
   const { data, error } = await supabase
     .from('questions')
     .select('*')
-    .eq('subject', subject.toLowerCase())
+    .eq('subject', subject)
     .eq('chapter', chapter)
-    .order('year', { ascending: false }); // Descending order of year!
+    .order('source_year', { ascending: false }); // Descending order of year!
 
   if (error) {
     console.error("Error fetching practice questions:", error);
@@ -44,7 +39,7 @@ export async function fetchChaptersForSubject(subject) {
   const { data, error } = await supabase
     .from('questions')
     .select('chapter')
-    .eq('subject', subject.toLowerCase());
+    .eq('subject', subject);
     
   if (error) return [];
   // Filter out duplicates
