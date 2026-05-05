@@ -14,11 +14,6 @@ const Navbar = () => {
     return () => subscription.unsubscribe()
   }, [])
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut()
-    navigate('/')
-  }
-
   if (path.startsWith('/pyq/test')) return null
 
   const isHome        = path === '/'
@@ -29,7 +24,7 @@ const Navbar = () => {
   const isLeaderboard = path === '/leaderboard'
 
   const modeBadge = isPractice
-    ? { label: 'Practice Mode',    color: '#3b82f6', bg: 'rgba(59,130,246,0.1)',  border: 'rgba(59,130,246,0.25)',  dot: 'bg-blue-400'   }
+    ? { label: 'Practice Mode',    color: '#10b981', bg: 'rgba(16,185,129,0.1)',  border: 'rgba(16,185,129,0.25)',  dot: 'bg-emerald-400' }
     : isPYQ && !path.startsWith('/pyq/result')
     ? { label: 'PYQ Mode',         color: '#f59e0b', bg: 'rgba(245,158,11,0.1)',  border: 'rgba(245,158,11,0.25)',  dot: 'bg-amber-400'  }
     : path.startsWith('/pyq/result')
@@ -37,128 +32,77 @@ const Navbar = () => {
     : isCalculator
     ? { label: 'Score Calculator', color: '#8b5cf6', bg: 'rgba(139,92,246,0.1)', border: 'rgba(139,92,246,0.25)', dot: 'bg-violet-400' }
     : isDashboard
-    ? { label: 'Dashboard',        color: '#6366f1', bg: 'rgba(99,102,241,0.1)',  border: 'rgba(99,102,241,0.25)',  dot: 'bg-indigo-400' }
+    ? { label: 'Dashboard',        color: '#3b82f6', bg: 'rgba(59,130,246,0.1)',  border: 'rgba(59,130,246,0.25)',  dot: 'bg-blue-400'    }
     : isLeaderboard
     ? { label: 'Leaderboard',      color: '#f59e0b', bg: 'rgba(245,158,11,0.1)',  border: 'rgba(245,158,11,0.25)',  dot: 'bg-amber-400'  }
     : null
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+    navigate('/')
+  }
+
   return (
     <nav
-      className="fixed top-0 left-0 right-0 z-50 flex items-center justify-between px-5 py-3.5"
+      className="fixed top-0 left-0 right-0 z-[100] flex items-center justify-between px-6 py-4"
       style={{
-        background: 'rgba(8,11,20,0.75)',
-        backdropFilter: 'blur(20px)',
-        borderBottom: '1px solid rgba(255,255,255,0.07)',
+        background: 'rgba(5,7,10,0.6)',
+        backdropFilter: 'blur(32px)',
+        borderBottom: '1px solid rgba(255,255,255,0.06)',
       }}
     >
       {/* ── Logo ── */}
-      <Link to="/" className="flex items-center gap-2.5 group flex-shrink-0">
-        <div
-          className="w-8 h-8 rounded-xl flex items-center justify-center text-sm transition-transform duration-300 group-hover:scale-110"
-          style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.12)' }}
-        >
-          📚
+      <Link to="/" className="flex items-center gap-3 group flex-shrink-0">
+        <div className="w-10 h-10 rounded-2xl flex items-center justify-center text-xl transition-all duration-300 group-hover:scale-110 shadow-lg bg-white/5 border border-white/10">
+          🚀
         </div>
-        <span className="font-display font-bold text-base tracking-tight text-white hidden sm:block">
-          Study<span style={{ color: '#3b82f6' }}>Vault</span>
+        <span className="font-display font-black text-xl tracking-tighter text-white hidden sm:block uppercase">
+          STUDY<span className="text-emerald-500">VAULT</span>
         </span>
       </Link>
 
-      {/* ── Center mode badge ── */}
+      {/* ── Center Mode Pill ── */}
       {modeBadge && (
         <div
-          className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs"
-          style={{ background: modeBadge.bg, border: `1px solid ${modeBadge.border}`, color: modeBadge.color }}
+          className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2.5 px-5 py-2 rounded-full text-[10px] font-black tracking-[0.2em] uppercase shadow-2xl animate-fade-in"
+          style={{ 
+            background: modeBadge.bg, 
+            border: `1px solid ${modeBadge.border}`,
+            color: modeBadge.color 
+          }}
         >
-          <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${modeBadge.dot}`} />
+          <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${modeBadge.dot}`} style={{ boxShadow: `0 0 12px ${modeBadge.color}` }} />
           {modeBadge.label}
         </div>
       )}
 
-      {/* ── Right actions ── */}
-      <div className="flex items-center gap-2 flex-shrink-0">
-
-        {/* Home button — shown on every non-home page */}
-        {!isHome && (
-          <Link
-            to="/"
-            className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors duration-200 px-3 py-1.5 rounded-xl"
-            style={{ border: '1px solid rgba(255,255,255,0.08)' }}
-          >
-            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
-            </svg>
-            <span className="hidden sm:inline">Home</span>
+      {/* ── Right Actions ── */}
+      <div className="flex items-center gap-4 flex-shrink-0">
+        <div className="hidden md:flex items-center gap-8 mr-4 border-r border-white/10 pr-8">
+          <Link to="/" className={`text-[11px] font-black tracking-[0.1em] uppercase transition-all ${isHome ? 'text-white' : 'text-slate-500 hover:text-slate-200'}`}>
+            Home
           </Link>
-        )}
+          {user && (
+            <>
+              <Link to="/leaderboard" className={`text-[11px] font-black tracking-[0.1em] uppercase transition-all ${isLeaderboard ? 'text-white' : 'text-slate-500 hover:text-slate-200'}`}>
+                Ranks
+              </Link>
+              <Link to="/dashboard" className={`text-[11px] font-black tracking-[0.1em] uppercase transition-all ${isDashboard ? 'text-white' : 'text-slate-500 hover:text-slate-200'}`}>
+                Dashboard
+              </Link>
+            </>
+          )}
+        </div>
 
-        {/* Home page quick-nav links */}
-        {isHome && (
-          <div className="flex items-center gap-2">
-            <Link to="/practice" className="text-xs px-3 py-1.5 rounded-xl transition-colors"
-              style={{ background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.25)', color: '#3b82f6' }}>
-              Practice
-            </Link>
-            <Link to="/pyq" className="text-xs px-3 py-1.5 rounded-xl transition-colors"
-              style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.25)', color: '#f59e0b' }}>
-              PYQ
-            </Link>
-            <Link to="/calculator" className="text-xs px-3 py-1.5 rounded-xl transition-colors"
-              style={{ background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.25)', color: '#8b5cf6' }}>
-              ⚡ Calc
-            </Link>
-          </div>
-        )}
-
-        {/* Leaderboard — always visible when logged in */}
-        {user && (
-          <Link
-            to="/leaderboard"
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl transition-colors"
-            style={{
-              background: isLeaderboard ? 'rgba(245,158,11,0.15)' : 'rgba(245,158,11,0.07)',
-              border: '1px solid rgba(245,158,11,0.25)',
-              color: '#fbbf24',
-            }}
-          >
-            🏆<span className="hidden sm:inline ml-1">Ranks</span>
-          </Link>
-        )}
-
-        {/* Auth section */}
         {user ? (
-          <div className="flex items-center gap-2">
-            <Link
-              to="/dashboard"
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-xl transition-colors"
-              style={{
-                background: isDashboard ? 'rgba(99,102,241,0.18)' : 'rgba(99,102,241,0.08)',
-                border: '1px solid rgba(99,102,241,0.3)',
-                color: '#818cf8',
-              }}
-            >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                  d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-              </svg>
-              <span className="hidden sm:inline">Dashboard</span>
-            </Link>
-            <button
-              onClick={handleLogout}
-              className="text-xs px-3 py-1.5 rounded-xl transition-colors text-slate-500 hover:text-slate-300"
-              style={{ border: '1px solid rgba(255,255,255,0.07)' }}
-            >
-              Sign out
-            </button>
-          </div>
+          <button onClick={handleLogout}
+            className="px-6 py-2.5 rounded-xl text-[11px] font-black tracking-widest uppercase text-slate-400 hover:text-white hover:bg-white/5 transition-all border border-white/5">
+            Log out
+          </button>
         ) : (
-          <Link
-            to="/login"
-            className="text-xs px-3 py-1.5 rounded-xl font-medium transition-all"
-            style={{ background: 'linear-gradient(135deg,#3b82f6,#6366f1)', color: '#fff' }}
-          >
-            Sign in
+          <Link to="/login"
+            className="px-7 py-2.5 rounded-xl text-[11px] font-black tracking-widest uppercase text-white shadow-xl transition-all active:scale-95 bg-gradient-to-br from-emerald-500 to-emerald-700 hover:shadow-emerald-500/20">
+            Sign In
           </Link>
         )}
       </div>

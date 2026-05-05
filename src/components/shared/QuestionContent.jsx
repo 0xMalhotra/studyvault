@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useMemo } from 'react'
 
 export default function QuestionContent({ html, className = '' }) {
   const ref = useRef(null)
@@ -11,13 +11,22 @@ export default function QuestionContent({ html, className = '' }) {
     }
   }, [html])
 
-  if (!html || html === 'N/A') return null
+  // Append cache buster to images in the HTML string
+  const processedHtml = useMemo(() => {
+    if (!html || typeof html !== 'string') return html;
+    const cacheBuster = `v=${Date.now()}`;
+    return html.replace(/src="([^"]+)"/g, (match, src) => {
+      if (src.includes('v=')) return match;
+      const separator = src.includes('?') ? '&' : '?';
+      return `src="${src}${separator}${cacheBuster}"`;
+    });
+  }, [html]);
 
   return (
     <div
       ref={ref}
       className={`question-html-content ${className}`}
-      dangerouslySetInnerHTML={{ __html: html }}
+      dangerouslySetInnerHTML={{ __html: processedHtml }}
     />
   )
 }

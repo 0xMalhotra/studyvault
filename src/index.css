@@ -3,16 +3,18 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
-    --bg-primary: #080b14;
-    --bg-secondary: #0d1120;
-    --accent-physics: #3b82f6;
-    --accent-chemistry: #10b981;
-    --accent-maths: #f59e0b;
-    --glass-bg: rgba(255, 255, 255, 0.04);
-    --glass-border: rgba(255, 255, 255, 0.09);
-    --glass-hover: rgba(255, 255, 255, 0.08);
-  }
+:root {
+  --bg-primary: #05070a;
+  --bg-secondary: #0a0d14;
+  --glass-bg: rgba(15, 20, 30, 0.4);
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --glass-hover: rgba(255, 255, 255, 0.08);
+  --accent-primary: #10b981;
+  --accent-secondary: #3b82f6;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --card-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
 
   * {
     box-sizing: border-box;
@@ -59,11 +61,16 @@
 @layer components {
   .glass-card {
     background: var(--glass-bg);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
     border: 1px solid var(--glass-border);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-radius: 20px;
+    border-radius: 24px;
+    box-shadow: var(--card-shadow);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .premium-border {
+    border: 1px solid rgba(255, 255, 255, 0.03);
   }
 
   .glass-card:hover {
@@ -117,4 +124,42 @@
   .stagger-8  { animation-delay: 0.40s; }
   .stagger-9  { animation-delay: 0.45s; }
   .stagger-10 { animation-delay: 0.50s; }
+
+  /* JEE Question Image Fixes */
+  .question-html-content img, 
+  .explanation-html-content img,
+  .question-image {
+    background-color: #ffffff !important;
+    padding: 10px !important;
+    border-radius: 12px !important;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.25) !important;
+    display: block !important;
+    margin: 1.5rem auto !important;
+    max-width: 85% !important;
+    max-height: 450px !important;
+    height: auto !important;
+    object-fit: contain !important;
+    border: 1px solid rgba(0,0,0,0.08) !important;
+  }
+  /* Skeleton Loading */
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.03) 25%,
+      rgba(255, 255, 255, 0.08) 50%,
+      rgba(255, 255, 255, 0.03) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite linear;
+  }
+
+  @keyframes shimmer {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  @keyframes pulseGlow {
+    0%, 100% { opacity: 0.5; transform: scale(1); }
+    50% { opacity: 0.8; transform: scale(1.05); }
+  }
 }

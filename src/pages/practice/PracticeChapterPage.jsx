@@ -6,7 +6,8 @@ import { supabase } from '../../lib/supabase'
 // Slug a chapter name for use as URL param
 // e.g. "Units, Measurements and Errors" → "units-measurements-and-errors"
 function slugify(str) {
-  return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  if (!str) return ''
+  return String(str).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 }
 
 const PracticeChapterPage = () => {
@@ -21,26 +22,47 @@ const PracticeChapterPage = () => {
 
   useEffect(() => {
     if (!subject) return
-    supabase
-      .from('questions')
-      .select('chapter, correct_option, correct_answer')
-      .eq('subject', subject.name)
-      .then(({ data, error }) => {
-        if (!error && data) {
-          // Get unique chapter names with question counts
-          const counts = {}
-          for (const row of data) {
-            if (!row.correct_option && !row.correct_answer) continue
-            counts[row.chapter] = (counts[row.chapter] || 0) + 1
-          }
-          setSbChapters(
-            Object.entries(counts)
-              .map(([name, count]) => ({ name, count, slug: slugify(name) }))
-              .sort((a, b) => a.name.localeCompare(b.name))
-          )
-        }
-        setLoadingSb(false)
-      })
+    let cancelled = false
+
+    const fetchAllCounts = async () => {
+      let allData = []
+      let from = 0
+      let step = 1000
+
+      while (true) {
+        const { data, error } = await supabase
+          .from('questions')
+          .select('chapter, correct_option, correct_answer')
+          .eq('subject', subject.name)
+          .range(from, from + step - 1)
+        
+        if (cancelled || error || !data || data.length === 0) break
+        allData = [...allData, ...data]
+        if (data.length < step) break
+        from += step
+      }
+
+      if (cancelled) return
+
+      const counts = {}
+      for (const row of allData) {
+        // Only count valid questions
+        if (!row.correct_option && !row.correct_answer) continue
+        const slug = slugify(row.chapter)
+        if (!counts[slug]) counts[slug] = { name: row.chapter, count: 0 }
+        counts[slug].count += 1
+      }
+      
+      setSbChapters(
+        Object.entries(counts)
+          .map(([slug, info]) => ({ slug, name: info.name, count: info.count }))
+          .sort((a, b) => a.name.localeCompare(b.name))
+      )
+      setLoadingSb(false)
+    }
+
+    fetchAllCounts()
+    return () => { cancelled = true }
   }, [subject])
 
   if (!subject) return (
@@ -53,27 +75,26 @@ const PracticeChapterPage = () => {
   // Supabase chapters take priority if they exist; local ones fill gaps
   const sbChapterSlugs    = new Set(sbChapters.map(c => c.slug))
 
-  // All chapters to display
+  const sbMap = Object.fromEntries(sbChapters.map(c => [c.slug, c]))
   const allChapters = [
-    // Supabase chapters first
-    ...sbChapters.map(c => ({
-      id:            c.slug,
-      name:          c.name,
-      questionCount: c.count,
-      source:        'supabase',
-      icon:          '📖',
-      description:   `${c.count} PYQ questions`,
-    })),
-    // Local chapters not already covered by Supabase
-    ...(subject.chapters || [])
-      .filter(c => !sbChapterSlugs.has(c.id))
+    ...(subject.chapters || []).map(localChap => {
+      const sb = sbMap[localChap.id] || sbMap[slugify(localChap.name)]
+      const count = sb ? sb.count : (localChap.questionCount || 0)
+      return {
+        ...localChap,
+        questionCount: count,
+        source: sb ? 'supabase' : 'local',
+        description: sb ? `${count} PYQ Questions available` : (localChap.description || 'Practice questions available')
+      }
+    }),
+    ...sbChapters.filter(c => !(subject.chapters || []).some(lc => lc.id === c.slug || slugify(lc.name) === c.slug))
       .map(c => ({
-        id:            c.id,
+        id:            c.slug,
         name:          c.name,
-        questionCount: c.questionCount || c.questions?.length || 0,
-        source:        'local',
-        icon:          c.icon || '📝',
-        description:   c.description || '',
+        questionCount: c.count,
+        source:        'supabase',
+        icon:          '📖',
+        description:   `${c.count} PYQ questions found in database`,
       })),
   ]
 

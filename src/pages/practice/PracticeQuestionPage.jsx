@@ -7,16 +7,19 @@ import QuestionContent from '../../components/shared/QuestionContent'
 import { supabase } from '../../lib/supabase'
 
 // ─── Image base URL ───────────────────────────────────────────────────────────
-// Option A - Supabase Storage: 'https://YOUR_PROJECT.supabase.co/storage/v1/object/public/scraped-images/'
-// Option B - Vite public folder: '/scraped_images/'
 const IMAGE_BASE = '/scraped_images/'
 
 // ─── Slugify ──────────────────────────────────────────────────────────────────
 function slugify(str) {
-  return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  if (!str) return ''
+  return String(str).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 }
 
 const OPTION_FIELDS = ['option_a', 'option_b', 'option_c', 'option_d']
+
+// ─── Simple Global Cache ──────────────────────────────────────────────────────
+const questionCache = new Map()
+const sidebarCache = new Map()
 
 function getOptionByLetter(row) {
   const index = { A: 0, B: 1, C: 2, D: 3 }[String(row.correct_option || '').trim().toUpperCase()]
@@ -40,14 +43,9 @@ function ordinal(day) {
 
 function formatDateLabel(dateValue, fallbackYear) {
   if (!dateValue) return ''
-
-  const months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
-  ]
+  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
   const [year, month, day] = String(dateValue).split('T')[0].split('-')
   const monthName = months[Number(month) - 1]
-
   if (!day || !monthName) return ''
   return `${ordinal(day)} ${monthName}, ${year || fallbackYear}`
 }
@@ -80,25 +78,21 @@ function mapSupabaseQuestion(row) {
     examShiftLabel: row.source_shift || row.exam_shift || '',
     examMeta: formatExamMeta(row),
     examShift: row.exam_shift_raw || '',
-    image: row.image_url ? IMAGE_BASE + row.image_url : null,
+    image: row.image_url ? (row.image_url.startsWith('http') ? row.image_url : `${IMAGE_BASE}${row.image_url}`) : null,
+    examDateRaw: row.source_date || row.exam_date || null,
     match_table: row.match_table,
     question_type_detail: row.question_type_detail || 'standard',
     isHtml: true,
   }
 }
 
-// ─── MathText — renders inline KaTeX if katex is installed, else plain text ──
-// Install: npm install katex  then add  import 'katex/dist/katex.min.css'  in main.jsx
 function MathText({ text, className = '' }) {
   const [katex, setKatex] = useState(null)
-
   useEffect(() => {
     import('katex').then(mod => setKatex(mod.default)).catch(() => {})
   }, [])
-
   const html = useMemo(() => {
     if (!katex || !text) return null
-    // Split on $...$ and $$...$$
     const parts = []
     const pattern = /(\$\$[\s\S]+?\$\$|\$[^$\n]+?\$)/g
     let last = 0, match
@@ -109,239 +103,370 @@ function MathText({ text, className = '' }) {
       const latex = display ? raw.slice(2, -2) : raw.slice(1, -1)
       try {
         parts.push({ type: 'math', val: katex.renderToString(latex, { displayMode: display, throwOnError: false, output: 'html', strict: false }), display })
-      } catch {
-        parts.push({ type: 'text', val: raw })
-      }
+      } catch { parts.push({ type: 'text', val: raw }) }
       last = match.index + raw.length
     }
     if (last < text.length) parts.push({ type: 'text', val: text.slice(last) })
     if (!parts.some(p => p.type === 'math')) return null
-    return parts.map((p, i) =>
-      p.type === 'text'
-        ? `<span>${p.val.replace(/</g, '&lt;')}</span>`
-        : `<span${p.display ? ' style="display:block;margin:8px 0"' : ''}>${p.val}</span>`
-    ).join('')
+    return parts.map((p, i) => p.type === 'text' ? `<span>${p.val.replace(/</g, '&lt;')}</span>` : `<span${p.display ? ' style="display:block;margin:8px 0"' : ''}>${p.val}</span>`).join('')
   }, [katex, text])
-
   if (html) return <span className={className} dangerouslySetInnerHTML={{ __html: html }} />
   return <span className={className}>{text}</span>
 }
 
-// ─── Strip match-table markdown from question text (rendered separately) ─────
 function getDisplayText(q) {
   if (!q) return ''
   let text = q.question || ''
   if (q.question_type_detail === 'match' || q.match_table) {
-    text = text.replace(/(\|.+\|\s*\n?)+/g, '')
-    text = text.replace(/\.tg\s*\{[^}]*\}/g, '').replace(/\.tg\s+\.[a-z0-9-]+\{[^}]*\}/g, '')
+    text = text.replace(/(\|.+\|\s*\n?)+/g, '').replace(/\.tg\s*\{[^}]*\}/g, '').replace(/\.tg\s+\.[a-z0-9-]+\{[^}]*\}/g, '')
     const firstMatch = text.match(/(Match\s+(List|the LIST)[^\n]*)/i)
     if (firstMatch) text = text.replace(/(Match\s+(List|the LIST)[^\n]*\n?)+/gi, firstMatch[0] + '\n')
   }
   return text.replace(/\s+/g, ' ').trim()
 }
 
-// ─── Palette dot ──────────────────────────────────────────────────────────────
-function PaletteDot({ index, current, state, onClick, color }) {
-  const cur = index === current
-  const cfg = cur
-    ? { bg: color, border: color, tc: '#fff' }
-    : state === 'correct'
-    ? { bg: 'rgba(16,185,129,0.2)',  border: 'rgba(16,185,129,0.6)',  tc: '#10b981' }
-    : state === 'incorrect'
-    ? { bg: 'rgba(239,68,68,0.2)',   border: 'rgba(239,68,68,0.6)',   tc: '#ef4444' }
-    : state === 'skipped'
-    ? { bg: 'rgba(245,158,11,0.15)', border: 'rgba(245,158,11,0.5)',  tc: '#f59e0b' }
-    : { bg: 'rgba(255,255,255,0.04)',border: 'rgba(255,255,255,0.1)', tc: '#475569' }
+function QuestionSkeleton({ subjectColor }) {
   return (
-    <button onClick={() => onClick(index)}
-      className="w-8 h-8 rounded-xl text-xs font-bold transition-all duration-150 flex-shrink-0"
-      style={{ background: cfg.bg, border: `1px solid ${cfg.border}`, color: cfg.tc, transform: cur ? 'scale(1.15)' : 'scale(1)' }}>
-      {index + 1}
-    </button>
-  )
-}
-
-function LegendItem({ bg, border, label }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <div className="w-3 h-3 rounded-sm flex-shrink-0" style={{ background: bg, border: `1px solid ${border}` }} />
-      <span className="text-xs text-slate-500">{label}</span>
-    </div>
-  )
-}
-
-// ─── Main component ───────────────────────────────────────────────────────────
-const PracticeQuestionPage = () => {
-  const { subjectId, chapterId } = useParams()
-  const navigate = useNavigate()
-
-  const subject      = subjects.find(s => s.id === subjectId)
-  const localChapter = subject?.chapters?.find(c => c.id === chapterId)
-
-  const [questions, setQuestions]     = useState(null)
-  const [loading, setLoading]         = useState(true)
-  const [chapterName, setChapterName] = useState(localChapter?.name || '')
-  const [currentIndex, setCurrentIndex] = useState(0)
-  const [qStates, setQStates]           = useState({})
-  const [paletteOpen, setPaletteOpen]   = useState(false)
-  const [zoomImage, setZoomImage]       = useState(null)
-  const paletteRef = useRef()
-
-  // ── Load questions ──────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!subject) { setLoading(false); return }
-
-    let cancelled = false
-
-    const fallbackToLocal = () => {
-      if (!localChapter) return false
-      setChapterName(localChapter.name)
-      setQuestions(localChapter.questions)
-      setLoading(false)
-      return true
-    }
-
-    const fetch = async () => {
-      setLoading(true)
-      setQuestions(null)
-      setCurrentIndex(0)
-      setQStates({})
-
-      const { data: chapData } = await supabase
-        .from('questions').select('chapter').eq('subject', subject.name)
-      if (cancelled) return
-      if (!chapData) {
-        if (!fallbackToLocal()) setLoading(false)
-        return
-      }
-
-      const matched = [...new Set(chapData.map(r => r.chapter))].find(name =>
-        slugify(name) === chapterId || (localChapter && slugify(name) === slugify(localChapter.name))
-      )
-      if (!matched) {
-        if (!fallbackToLocal()) setLoading(false)
-        return
-      }
-      setChapterName(matched)
-
-      const { data: qData, error: qError } = await supabase
-        .from('questions').select('*')
-        .eq('subject', subject.name).eq('chapter', matched)
-        .order('source_year', { ascending: false })
-      if (cancelled) return
-      if (qError || !qData) {
-        if (!fallbackToLocal()) setLoading(false)
-        return
-      }
-
-      const mapped = qData.map(mapSupabaseQuestion).filter(q => q.correctAnswer)
-      if (mapped.length === 0) {
-        if (!fallbackToLocal()) setLoading(false)
-        return
-      }
-
-      setQuestions(mapped)
-      setLoading(false)
-    }
-    fetch()
-    return () => { cancelled = true }
-  }, [subjectId, chapterId, subject, localChapter])
-
-  useEffect(() => {
-    const h = e => { if (paletteRef.current && !paletteRef.current.contains(e.target)) setPaletteOpen(false) }
-    document.addEventListener('mousedown', h)
-    return () => document.removeEventListener('mousedown', h)
-  }, [])
-
-  // ── Guards ──────────────────────────────────────────────────────────────────
-  if (!subject) return (
-    <div className="relative z-10 pt-28 text-center text-slate-500">
-      Subject not found. <Link to="/practice" className="underline">Go back</Link>
-    </div>
-  )
-  if (loading) return (
-    <div className="fixed inset-0 flex items-center justify-center" style={{ background: 'var(--bg-primary)' }}>
-      <div className="text-center">
-        <div className="w-8 h-8 border-2 rounded-full animate-spin mx-auto mb-3"
-          style={{ borderColor: `${subject.color}30`, borderTopColor: subject.color }} />
-        <p className="text-slate-500 text-sm">Loading questions…</p>
+    <div className="relative z-10 min-h-screen pb-16 pt-24" style={{ background: 'var(--bg-primary)' }}>
+      <div className="max-w-full mx-auto px-6 lg:px-8 flex gap-6">
+        <div className="hidden xl:flex flex-col w-56 flex-shrink-0">
+          <div className="sticky top-24 rounded-3xl p-4 space-y-4" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <div className="h-6 w-24 skeleton rounded-md opacity-20" />
+            <div className="space-y-2">{[1,2,3,4,5,6,7,8].map(i => <div key={i} className="h-10 w-full skeleton rounded-xl opacity-10" />)}</div>
+          </div>
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="glass-card p-6 sm:p-8">
+            <div className="flex items-center justify-between mb-8">
+              <div className="flex gap-2">
+                <div className="h-6 w-20 skeleton rounded-full opacity-20" /><div className="h-6 w-32 skeleton rounded-full opacity-10" />
+              </div>
+              <div className="h-6 w-16 skeleton rounded-full opacity-20" />
+            </div>
+            <div className="space-y-3 mb-10">
+              <div className="h-5 w-full skeleton rounded-md opacity-20" /><div className="h-5 w-[90%] skeleton rounded-md opacity-20" /><div className="h-5 w-[40%] skeleton rounded-md opacity-20" />
+            </div>
+            <div className="h-48 w-full skeleton rounded-2xl mb-10 opacity-5" />
+            <div className="space-y-3">{[1,2,3,4].map(i => <div key={i} className="h-14 w-full skeleton rounded-2xl opacity-10" />)}</div>
+          </div>
+        </div>
       </div>
     </div>
   )
-  if (!questions || questions.length === 0) return (
-    <div className="relative z-10 pt-28 text-center text-slate-500">
-      No questions found. <Link to={`/practice/${subjectId}`} className="underline">Go back</Link>
-    </div>
-  )
+}
 
-  // ── Derived ─────────────────────────────────────────────────────────────────
-  const totalQ     = questions.length
-  const question   = questions[currentIndex]
-  const isFirst    = currentIndex === 0
-  const isLast     = currentIndex === totalQ - 1
-  const { selected = null, checked = false } = qStates[currentIndex] || {}
-  const isCorrect  = selected === question.correctAnswer
-  const hasMatch   = question.question_type_detail === 'match' || !!question.match_table
-  const displayText     = question.isHtml ? question.question : getDisplayText(question)
-  const answeredCount   = Object.values(qStates).filter(s => s.checked).length
-  const correctCount    = Object.entries(qStates).filter(([i, s]) => s.checked && s.selected === questions[+i]?.correctAnswer).length
-  const incorrectCount  = Object.entries(qStates).filter(([i, s]) => s.checked && s.selected !== questions[+i]?.correctAnswer).length
-  const progress        = (answeredCount / totalQ) * 100
+function checkNumerical(userStr, dbAnsStr) {
+  if (!userStr || !dbAnsStr || dbAnsStr === 'N/A') return false;
+  const parseNum = (s) => {
+    const m = String(s).match(/-?\d*\.?\d+/);
+    return m ? parseFloat(m[0]) : null;
+  };
+  const u = parseNum(userStr);
+  const d = parseNum(dbAnsStr);
+  if (u === null || d === null) return false;
+  return Math.abs(u - d) < 0.01;
+}
+
+export default function PracticeQuestionPage() {
+  const { subjectId, chapterId } = useParams()
+  const navigate = useNavigate()
+  const subject = subjects.find(s => s.id === subjectId)
+  const localChapter = subject?.chapters?.find(c => c.id === chapterId)
+
+  const [loading, setLoading] = useState(true)
+  const [chapterName, setChapterName] = useState(localChapter?.name || '')
+  const [questions, setQuestions] = useState(null)
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const [qStates, setQStates] = useState({})
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [zoomImage, setZoomImage] = useState(null)
+  const [allChapters, setAllChapters] = useState([])
+  const paletteRef = useRef()
+
+  useEffect(() => {
+    if (!subject) { setLoading(false); return }
+    let cancelled = false
+
+    const fetchQuestions = async (chapterName) => {
+      const cacheKey = `${subject.name}::${chapterName}::ids`
+      if (questionCache.has(cacheKey)) {
+        setQuestions(questionCache.get(cacheKey)); setLoading(false); return
+      }
+      
+      // OPTIMIZATION: Fetch only IDs first for instant navigator load
+      const { data: qData, error: qError } = await supabase
+        .from('questions')
+        .select('id, question_type_detail, option_a') // Fetch minimal info needed for structure
+        .eq('subject', subject.name)
+        .eq('chapter', chapterName)
+        .order('source_date', { ascending: false, nullsFirst: false })
+        .order('source_year', { ascending: false, nullsFirst: false })
+      
+      if (cancelled) return
+      if (qError || !qData || qData.length === 0) { if (!fallbackToLocal()) setLoading(false); return }
+      
+      // Store light versions (placeholders)
+      const lightMapped = qData.map(row => ({ 
+        id: row.id, 
+        isPlaceholder: true,
+        isNumerical: row.option_a === 'N/A' && row.question_type_detail !== 'match'
+      }))
+      
+      questionCache.set(cacheKey, lightMapped)
+      setQuestions(lightMapped)
+      setLoading(false)
+    }
+
+    const fallbackToLocal = () => {
+      if (!localChapter) return false
+      setChapterName(localChapter.name); setQuestions(localChapter.questions); setLoading(false)
+      return true
+    }
+
+    const resolveAndFetch = async () => {
+      setLoading(true); setQuestions(null); setCurrentIndex(0); setQStates({})
+      if (allChapters.length > 0) {
+        const matched = allChapters.find(c => c.id === chapterId || slugify(c.name) === chapterId)
+        if (matched) { setChapterName(matched.name); await fetchQuestions(matched.name); return }
+      }
+      // Fallback: Resolve chapter name from DB if not in syllabus
+      const { data: chapData } = await supabase.from('questions').select('chapter').eq('subject', subject.name).limit(1).eq('chapter', chapterId) 
+      // Note: This fallback is simplified for speed
+      const matched = chapData?.[0]?.chapter || localChapter?.name
+      if (!matched) { if (!fallbackToLocal()) setLoading(false); return }
+      setChapterName(matched); await fetchQuestions(matched)
+    }
+    resolveAndFetch()
+    return () => { cancelled = true }
+  }, [subjectId, chapterId, subject, localChapter, allChapters])
+
+  // ─── NEW: Lazy Load Full Question Data ──────────────────────────────────────
+  const [fullDataCache, setFullDataCache] = useState({})
+  const [loadingDetails, setLoadingDetails] = useState(false)
+
+  useEffect(() => {
+    if (!questions || !questions[currentIndex]) return
+    const q = questions[currentIndex]
+    if (!q.isPlaceholder) return // Already have full data (local or already fetched)
+    if (fullDataCache[q.id]) return // Already in details cache
+
+    let cancelled = false
+    const fetchDetail = async () => {
+      setLoadingDetails(true)
+      const { data, error } = await supabase
+        .from('questions')
+        .select('*')
+        .eq('id', q.id)
+        .single()
+      
+      if (!cancelled && !error && data) {
+        const full = mapSupabaseQuestion(data)
+        setFullDataCache(prev => ({ ...prev, [q.id]: full }))
+        
+        // PREFETCH NEXT 2 QUESTIONS
+        const nextIndices = [currentIndex + 1, currentIndex + 2]
+        nextIndices.forEach(idx => {
+          const nq = questions[idx]
+          if (nq && nq.isPlaceholder && !fullDataCache[nq.id]) {
+            supabase.from('questions').select('*').eq('id', nq.id).single().then(({ data: ndata }) => {
+              if (ndata) {
+                const nfull = mapSupabaseQuestion(ndata)
+                setFullDataCache(p => ({ ...p, [nq.id]: nfull }))
+              }
+            })
+          }
+        })
+      }
+      setLoadingDetails(false)
+    }
+    fetchDetail()
+    return () => { cancelled = true }
+  }, [currentIndex, questions, fullDataCache])
+
+  useEffect(() => {
+    if (!subject) return
+    let cancelled = false
+
+    const fetchAllStats = async () => {
+      let allData = []
+      let from = 0
+      let step = 1000
+
+      while (true) {
+        const { data, error } = await supabase
+          .from('questions')
+          .select('chapter, option_a')
+          .eq('subject', subject.name)
+          .range(from, from + step - 1)
+        
+        if (cancelled || error || !data || data.length === 0) break
+        allData = [...allData, ...data]
+        if (data.length < step) break
+        from += step
+      }
+
+      if (cancelled) return
+      if (allData.length === 0) {
+        setAllChapters((subject.chapters || []).map(c => ({ 
+          ...c, 
+          count: c.questionCount || 0,
+          mcq: Math.floor((c.questionCount || 0) * 0.8),
+          num: Math.ceil((c.questionCount || 0) * 0.2)
+        })))
+        return
+      }
+
+      const stats = {}
+      for (const row of allData) {
+        const slug = slugify(row.chapter)
+        if (!stats[slug]) stats[slug] = { name: row.chapter, total: 0, mcq: 0, num: 0 }
+        stats[slug].total += 1
+        if (row.option_a === 'N/A') stats[slug].num += 1; else stats[slug].mcq += 1
+      }
+      
+      const localIds = new Set((subject.chapters || []).map(c => c.id))
+      const merged = (subject.chapters || []).map(localChap => {
+        const s = stats[localChap.id] || stats[slugify(localChap.name)] || { total: 0, mcq: 0, num: 0 }
+        const finalCount = s.total || localChap.questionCount || 0
+        return { 
+          ...localChap, 
+          count: finalCount, 
+          mcq: s.mcq || (s.total === 0 ? Math.floor(finalCount * 0.8) : 0), 
+          num: s.num || (s.total === 0 ? Math.ceil(finalCount * 0.2) : 0) 
+        }
+      })
+      
+      const extras = Object.keys(stats)
+        .filter(slug => !localIds.has(slug))
+        .map(slug => ({
+          id: slug,
+          name: stats[slug].name,
+          count: stats[slug].total,
+          mcq: stats[slug].mcq,
+          num: stats[slug].num
+        }))
+
+      setAllChapters([...merged, ...extras])
+    }
+
+    fetchAllStats()
+    return () => { cancelled = true }
+  }, [subject])
+
+  useEffect(() => {
+    const h = e => { if (paletteRef.current && !paletteRef.current.contains(e.target)) setPaletteOpen(false) }
+    document.addEventListener('mousedown', h); return () => document.removeEventListener('mousedown', h)
+  }, [])
+
+  const [completedChapters, setCompletedChapters] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(`completed_${subjectId}`) || '[]') } catch { return [] }
+  })
+
+  const totalQ = questions?.length || 0
+  const answeredCount = Object.values(qStates).filter(s => s.checked).length
+
+  useEffect(() => {
+    if (totalQ > 0 && answeredCount === totalQ && !completedChapters.includes(chapterId)) {
+      const next = [...completedChapters, chapterId]
+      setCompletedChapters(next)
+      localStorage.setItem(`completed_${subjectId}`, JSON.stringify(next))
+    }
+  }, [answeredCount, totalQ, chapterId, completedChapters, subjectId])
+
+  if (!subject) return <div className="relative z-10 pt-28 text-center text-slate-500">Subject not found. <Link to="/practice" className="underline">Go back</Link></div>
+  if (loading) return <QuestionSkeleton subjectColor={subject.color} />
+  if (!questions || questions.length === 0) return <div className="relative z-10 pt-28 text-center text-slate-500">No questions found. <Link to={`/practice/${subjectId}`} className="underline">Go back</Link></div>
+
+  const rawQ = questions[currentIndex]
+  const question = rawQ.isPlaceholder ? (fullDataCache[rawQ.id] || rawQ) : rawQ
+  const isPlaceholder = question.isPlaceholder
+
+  const isFirst = currentIndex === 0
+  const isLast = currentIndex === totalQ - 1
+  const { selected = null, numAnswer = '', checked = false, isReview = false } = qStates[currentIndex] || {}
+  const hasMatch = !isPlaceholder && (question.question_type_detail === 'match' || !!question.match_table)
+  const isNumerical = isPlaceholder ? question.isNumerical : (question.options?.length === 0 && !hasMatch)
+  
+  let isCorrect = false
+  if (!isPlaceholder) {
+    if (isNumerical) { if (checked && numAnswer) isCorrect = checkNumerical(numAnswer, question.correctAnswer) || checkNumerical(numAnswer, question.answerText) }
+    else { isCorrect = selected === question.correctAnswer }
+  }
+
+  const displayText = isPlaceholder ? '' : (question.isHtml ? question.question : getDisplayText(question))
+  const correctCount = Object.entries(qStates).filter(([i, s]) => {
+    if (!s.checked) return false
+    const q = questions[+i]
+    if (q.isPlaceholder) {
+       const full = fullDataCache[q.id]
+       if (!full) return false
+       if (q.isNumerical) return checkNumerical(s.numAnswer, full.correctAnswer) || checkNumerical(s.numAnswer, full.answerText)
+       return s.selected === full.correctAnswer
+    }
+    const isNum = q.options.length === 0 && !(q.question_type_detail === 'match' || !!q.match_table)
+    if (isNum) return checkNumerical(s.numAnswer, q.correctAnswer) || checkNumerical(s.numAnswer, q.answerText)
+    return s.selected === q.correctAnswer
+  }).length
+
+  const incorrectCount = Object.entries(qStates).filter(([i, s]) => {
+    if (!s.checked) return false
+    const q = questions[+i]
+    if (q.isPlaceholder) {
+       const full = fullDataCache[q.id]
+       if (!full) return false
+       if (q.isNumerical) return !(checkNumerical(s.numAnswer, full.correctAnswer) || checkNumerical(s.numAnswer, full.answerText))
+       return s.selected !== full.correctAnswer
+    }
+    const isNum = q.options.length === 0 && !(q.question_type_detail === 'match' || !!q.match_table)
+    if (isNum) return !(checkNumerical(s.numAnswer, q.correctAnswer) || checkNumerical(s.numAnswer, q.answerText))
+    return s.selected !== q.correctAnswer
+  }).length
+  const progress = (answeredCount / totalQ) * 100
 
   const qStatus = i => {
     const s = qStates[i]
-    if (!s?.selected && !s?.checked) return 'unanswered'
-    if (s.checked) return s.selected === questions[i]?.correctAnswer ? 'correct' : 'incorrect'
-    if (s.selected) return 'skipped'
+    if (s?.isReview) return 'review'
+    if (!s?.selected && !s?.numAnswer && !s?.checked) return 'unanswered'
+    if (s.checked) {
+      const q = questions[i]
+      const full = q.isPlaceholder ? fullDataCache[q.id] : q
+      if (!full) return 'skipped'
+      const isNum = q.isPlaceholder ? q.isNumerical : (q.options.length === 0 && !(q.question_type_detail === 'match' || !!q.match_table))
+      if (isNum) return (checkNumerical(s.numAnswer, full.correctAnswer) || checkNumerical(s.numAnswer, full.answerText)) ? 'correct' : 'incorrect'
+      return s.selected === full.correctAnswer ? 'correct' : 'incorrect'
+    }
+    if (s.selected || s.numAnswer) return 'skipped'
     return 'unanswered'
   }
 
-  // ── Handlers ─────────────────────────────────────────────────────────────────
-  const upd      = patch => setQStates(p => ({ ...p, [currentIndex]: { ...(p[currentIndex] || {}), ...patch } }))
-  const setSelAns= val   => upd({ selected: val, checked: false })
-  const doCheck  = ()    => { if (selected) upd({ checked: true }) }
-  const doRetry  = ()    => upd({ selected: null, checked: false })
-  const doNext   = ()    => { if (!isLast)  { setCurrentIndex(i => i + 1); setPaletteOpen(false) } }
-  const doPrev   = ()    => { if (!isFirst) { setCurrentIndex(i => i - 1); setPaletteOpen(false) } }
-  const jumpTo   = i     => { setCurrentIndex(i); setPaletteOpen(false) }
-  const doRestart= ()    => { setCurrentIndex(0); setQStates({}); setPaletteOpen(false) }
+  const upd = patch => setQStates(p => ({ ...p, [currentIndex]: { ...(p[currentIndex] || {}), ...patch } }))
+  const setSelAns = val => upd({ selected: val, checked: false })
+  const setNumAns = val => upd({ numAnswer: val, checked: false })
+  const toggleRev = () => upd({ isReview: !isReview })
+  const doCheck = () => { if (selected || (isNumerical && numAnswer)) upd({ checked: true, isReview: false }) }
+  const doRetry = () => upd({ selected: null, numAnswer: '', checked: false })
+  const doNext = () => { if (!isLast) { setCurrentIndex(i => i + 1); setPaletteOpen(false) } }
+  const doPrev = () => { if (!isFirst) { setCurrentIndex(i => i - 1); setPaletteOpen(false) } }
+  const jumpTo = i => { setCurrentIndex(i); setPaletteOpen(false) }
+  const doRestart = () => { setCurrentIndex(0); setQStates({}); setPaletteOpen(false) }
 
-  // ── Finished screen ──────────────────────────────────────────────────────────
   if (answeredCount === totalQ) {
     const pct = Math.round((correctCount / totalQ) * 100)
     return (
       <div className="relative z-10 min-h-screen flex items-center justify-center px-6 pt-28 pb-16">
         <div className="max-w-md w-full">
-          <div className="glass-card p-8 text-center animate-fade-up opacity-0" style={{ animationFillMode: 'forwards' }}>
+          <div className="glass-card p-8 text-center animate-fade-up">
             <div className="text-5xl mb-4">{pct >= 80 ? '🎉' : pct >= 50 ? '👍' : '📚'}</div>
             <h2 className="font-display text-2xl font-extrabold text-white mb-1">Chapter Complete!</h2>
             <p className="text-slate-500 text-sm mb-6">{chapterName} · {subject.name}</p>
             <div className="flex items-center justify-center gap-8 mb-6">
-              <div className="text-center">
-                <div className="font-display text-3xl font-extrabold" style={{ color: '#10b981' }}>{correctCount}</div>
-                <div className="text-xs text-slate-500">Correct</div>
-              </div>
-              <div className="w-px h-12" style={{ background: 'rgba(255,255,255,0.1)' }} />
-              <div className="text-center">
-                <div className="font-display text-3xl font-extrabold" style={{ color: '#ef4444' }}>{incorrectCount}</div>
-                <div className="text-xs text-slate-500">Incorrect</div>
-              </div>
-              <div className="w-px h-12" style={{ background: 'rgba(255,255,255,0.1)' }} />
-              <div className="text-center">
-                <div className="font-display text-3xl font-extrabold text-white">{pct}%</div>
-                <div className="text-xs text-slate-500">Score</div>
-              </div>
+              <div className="text-center"><div className="text-3xl font-bold text-emerald-500">{correctCount}</div><div className="text-xs text-slate-500">Correct</div></div>
+              <div className="w-px h-12 bg-white/10" /><div className="text-center"><div className="text-3xl font-bold text-red-500">{incorrectCount}</div><div className="text-xs text-slate-500">Incorrect</div></div>
+              <div className="w-px h-12 bg-white/10" /><div className="text-center"><div className="text-3xl font-bold text-white">{pct}%</div><div className="text-xs text-slate-500">Score</div></div>
             </div>
             <div className="flex gap-3">
-              <button onClick={doRestart} className="flex-1 py-3 rounded-2xl text-sm font-semibold"
-                style={{ background: `${subject.color}18`, border: `1px solid ${subject.color}30`, color: subject.color }}>
-                Restart
-              </button>
-              <button onClick={() => navigate(`/practice/${subjectId}`)}
-                className="flex-1 py-3 rounded-2xl text-sm font-semibold text-white"
-                style={{ background: subject.color }}>
-                Back to Chapters
-              </button>
+              <button onClick={doRestart} className="flex-1 py-3 rounded-2xl text-sm font-semibold" style={{ background: `${subject.color}18`, color: subject.color }}>Restart</button>
+              <button onClick={() => navigate(`/practice/${subjectId}`)} className="flex-1 py-3 rounded-2xl text-sm font-semibold text-white" style={{ background: subject.color }}>Back</button>
             </div>
           </div>
         </div>
@@ -349,274 +474,272 @@ const PracticeQuestionPage = () => {
     )
   }
 
-  // ── Difficulty badge config ───────────────────────────────────────────────
-  const diffCfg = question.difficulty === 'Hard'
-    ? { bg: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#ef4444' }
-    : question.difficulty === 'Easy'
-    ? { bg: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)', color: '#10b981' }
-    : { bg: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', color: '#f59e0b' }
+  const difficulty = isPlaceholder ? 'Medium' : (question.difficulty || 'Medium')
+  const diffCfg = difficulty === 'Hard' ? { bg: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#ef4444' } : difficulty === 'Easy' ? { bg: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)', color: '#10b981' } : { bg: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', color: '#f59e0b' }
 
   return (
     <div className="relative z-10 min-h-screen pb-16 pt-24" style={{ background: 'var(--bg-primary)' }}>
-      <div className="max-w-5xl mx-auto px-4 flex gap-5">
+      <div className="max-w-full mx-auto px-6 lg:px-8 flex gap-6">
+        
+        {/* ── LEFT SIDEBAR ─────────────────────────────────────────────────── */}
+        <div className="hidden xl:flex flex-col w-72 flex-shrink-0">
+          <div className="sticky top-24 space-y-5">
+            <div className="rounded-3xl overflow-hidden glass-card">
+              <div className="px-5 pt-5 pb-4 border-b border-white/5 bg-white/5">
+                <div className="flex items-center gap-3 mb-1">
+                  <span className="text-xl">{subject.emoji}</span>
+                  <p className="text-sm font-bold text-slate-200 truncate">{subject.name}</p>
+                </div>
+                <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest pl-8">{allChapters.length} Chapters</p>
+              </div>
+              <div className="overflow-y-auto py-3 scrollbar-hide" style={{ maxHeight: 'calc(100vh - 380px)' }}>
+                {allChapters.map(ch => {
+                  const isActive = ch.id === chapterId || slugify(ch.name) === chapterId
+                  const isDone = completedChapters.includes(ch.id)
+                  return (
+                    <button key={ch.id} onClick={() => navigate(`/practice/${subjectId}/${ch.id}`)} 
+                      className={`w-full text-left px-5 py-3.5 transition-all group border-l-4 relative ${isActive ? 'bg-white/5 border-emerald-500' : 'border-transparent hover:bg-white/[0.02]'}`}>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <p className={`text-[12px] leading-tight truncate font-bold ${isActive ? 'text-white' : 'text-slate-400 group-hover:text-slate-300'}`}>{ch.name}</p>
+                        {isDone && <svg className="w-3 h-3 text-emerald-500" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>}
+                      </div>
+                      <div className="flex gap-2 items-center">
+                        <div className={`flex items-center px-2 py-0.5 rounded-lg gap-1.5 transition-colors ${isActive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/5 text-slate-500'}`}>
+                          <span className="text-[8px] font-black uppercase tracking-tighter opacity-70">MCQ</span>
+                          <span className="text-[10px] font-mono font-black">{ch.mcq}</span>
+                        </div>
+                        <div className={`flex items-center px-2 py-0.5 rounded-lg gap-1.5 transition-colors ${isActive ? 'bg-blue-500/20 text-blue-400' : 'bg-white/5 text-slate-500'}`}>
+                          <span className="text-[8px] font-black uppercase tracking-tighter opacity-70">NUM</span>
+                          <span className="text-[10px] font-mono font-black">{ch.num}</span>
+                        </div>
+                      </div>
+                      {isActive && <div className="absolute right-3 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]" />}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
 
-        {/* ── QUESTION COLUMN ─────────────────────────────────────────────── */}
+            {/* PROGRESS BENTO BOX */}
+            <div className="glass-card p-6 flex items-center gap-6 group">
+              <div className="relative w-16 h-16 flex-shrink-0">
+                <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
+                  <circle cx="18" cy="18" r="16" fill="none" className="stroke-white/[0.05]" strokeWidth="3" />
+                  <circle cx="18" cy="18" r="16" fill="none" className="stroke-emerald-500 transition-all duration-1000" strokeWidth="3" 
+                    strokeDasharray={`${(completedChapters.length / allChapters.length) * 100}, 100`} strokeLinecap="round" style={{ filter: 'drop-shadow(0 0 4px rgba(16,185,129,0.4))' }} />
+                </svg>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-[11px] font-black text-white">{Math.round((completedChapters.length / allChapters.length) * 100 || 0)}%</span>
+                </div>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-1">Subject Progress</p>
+                <p className="text-[13px] font-bold text-white truncate">{completedChapters.length} / {allChapters.length}</p>
+                <p className="text-[10px] text-slate-400 font-medium">Chapters Finished</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── CENTER COLUMN ────────────────────────────────────────────────── */}
         <div className="flex-1 min-w-0">
-
-          {/* Breadcrumb + live score */}
-          <div className="flex items-center justify-between mb-4 gap-4 flex-wrap">
-            <div className="flex items-center gap-2 text-xs text-slate-600 flex-wrap">
-              <Link to="/practice" className="hover:text-slate-400 transition-colors">Practice</Link>
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/></svg>
-              <Link to={`/practice/${subjectId}`} className="hover:text-slate-400" style={{ color: subject.color }}>{subject.name}</Link>
-              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/></svg>
-              <span className="text-slate-400 truncate max-w-32 sm:max-w-none">{chapterName}</span>
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-2 text-[10px] font-bold tracking-widest uppercase text-slate-500">
+              <Link to="/practice" className="hover:text-slate-300 transition-colors">StudyVault</Link>
+              <span className="opacity-20">/</span>
+              <span style={{ color: subject.color }}>{subject.name}</span>
             </div>
-            <div className="flex items-center gap-3 text-xs flex-shrink-0">
-              <span className="text-emerald-400 font-semibold">✓ {correctCount}</span>
-              <span className="text-red-400 font-semibold">✗ {incorrectCount}</span>
-              <span className="text-slate-600">{answeredCount}/{totalQ}</span>
-            </div>
+            <button onClick={toggleRev} className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-[10px] font-bold tracking-wider uppercase transition-all ${isReview ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-white/5 text-slate-500 hover:text-slate-300 border border-transparent'}`}>
+              <svg className="w-3.5 h-3.5" fill={isReview ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg>
+              {isReview ? 'Reviewing' : 'Mark for Review'}
+            </button>
           </div>
 
-          {/* Progress bar */}
-          <div className="w-full h-1 rounded-full mb-5" style={{ background: 'rgba(255,255,255,0.07)' }}>
-            <div className="h-full rounded-full transition-all duration-500" style={{ width: `${progress}%`, background: subject.color }} />
-          </div>
-
-          {/* Question card */}
-          <div className="glass-card p-7 animate-fade-up opacity-0" style={{ animationFillMode: 'forwards' }}>
-
-            {/* Meta row */}
-            <div className="flex items-center justify-between mb-5">
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center text-sm font-mono font-bold"
-                  style={{ background: `${subject.color}18`, border: `1px solid ${subject.color}28`, color: subject.color }}>
-                  {String(currentIndex + 1).padStart(2, '0')}
-                </div>
-                <span className="text-xs text-slate-500 font-mono">of {totalQ}</span>
-                {(question.examDate || question.examShiftLabel || question.examMeta || question.year) && (
-                  <div
-                    className="inline-flex min-h-8 max-w-full items-center gap-2 rounded-xl px-2.5 py-1 text-xs"
-                    style={{
-                      background: `linear-gradient(135deg, ${subject.color}16, rgba(255,255,255,0.035))`,
-                      border: `1px solid ${subject.color}30`,
-                      boxShadow: `0 0 0 1px rgba(255,255,255,0.025) inset`,
-                    }}
-                    title={question.examMeta || question.year}
-                  >
-                    <svg className="h-3.5 w-3.5 flex-shrink-0" style={{ color: subject.color }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3M5 11h14M7 5h10a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" />
-                    </svg>
-                    <span className="truncate font-semibold text-slate-200">
-                      {question.examDate || question.year || question.examMeta}
-                    </span>
-                    {question.examShiftLabel && (
-                      <span
-                        className="flex-shrink-0 rounded-lg px-1.5 py-0.5 font-semibold"
-                        style={{
-                          background: `${subject.color}18`,
-                          color: subject.color,
-                          border: `1px solid ${subject.color}25`,
-                        }}
-                      >
-                        {question.examShiftLabel}
-                      </span>
-                    )}
-                  </div>
-                )}
-                {hasMatch && (
-                  <span className="text-xs px-2 py-0.5 rounded-full"
-                    style={{ background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)', color: '#a78bfa' }}>
-                    Match
-                  </span>
-                )}
+          <div className="glass-card overflow-hidden p-6 sm:p-10 mb-8 pb-10 relative">
+            <div className="flex items-center justify-between mb-8">
+              <div className="flex items-center gap-3">
+                <span className="px-3 py-1 rounded-full text-[10px] font-extrabold tracking-widest uppercase" style={{ ...diffCfg }}>{difficulty}</span>
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Q {currentIndex + 1} / {totalQ}</span>
               </div>
-              <span className="text-xs px-2.5 py-1 rounded-full flex-shrink-0" style={diffCfg}>
-                {question.difficulty}
-              </span>
+              <div className="px-3 py-1 rounded-full bg-white/5 border border-white/5 text-[10px] font-bold text-slate-400 uppercase tracking-widest">{isPlaceholder ? '...' : question.examMeta}</div>
             </div>
 
-            {/* ── Question text — rendered via MathText ── */}
-            <div className="text-slate-100 text-base leading-relaxed font-medium mb-2">
-              {question.isHtml ? <QuestionContent html={displayText} /> : <MathText text={displayText} />}
-            </div>
-
-            {/* Match table */}
-            {hasMatch && (
-              <MatchTable matchTableJson={question.match_table} questionText={question.question} accentColor={subject.color} />
-            )}
-
-            {/* Image */}
-            {question.image && (
-              <div className="mb-5 mt-3 rounded-2xl overflow-hidden cursor-zoom-in"
-                style={{ border: '1px solid rgba(255,255,255,0.1)' }}
-                onClick={() => setZoomImage(question.image)}>
-                <img src={question.image} alt="Diagram" className="w-full object-contain max-h-64 bg-slate-900" />
-              </div>
-            )}
-
-            {/* Options — each also passed through MathText via OptionButton */}
-            <div className="space-y-2.5 mb-6 mt-4">
-              {question.options.map((opt, i) => (
-                <OptionButton key={opt + i} opt={opt} index={i}
-                  selected={checked ? selected : (selected === opt ? opt : null)}
-                  correctAnswer={checked ? question.correctAnswer : null}
-                  mode={checked ? 'practice' : 'pyq-active'}
-                  accentColor={subject.color}
-                  onClick={o => !checked && setSelAns(o)} />
-              ))}
-            </div>
-
-            {/* Explanation */}
-            <div className="overflow-hidden transition-all duration-500"
-              style={{ maxHeight: checked ? '320px' : '0px', opacity: checked ? 1 : 0 }}>
-              <div className="p-4 rounded-2xl mb-4 overflow-y-auto"
-                style={{ background: `${subject.color}0a`, border: `1px solid ${subject.color}22`, maxHeight: 260 }}>
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
-                    style={{ background: isCorrect ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)' }}>
-                    {isCorrect
-                      ? <svg className="w-3 h-3" fill="none" stroke="#10b981" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7"/></svg>
-                      : <svg className="w-3 h-3" fill="none" stroke="#ef4444" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12"/></svg>
-                    }
-                  </div>
-                  <span className="text-xs font-bold" style={{ color: isCorrect ? '#10b981' : '#ef4444' }}>
-                    {isCorrect ? 'Correct!' : `Incorrect — Answer: ${question.answerLabel || question.answerText || question.correctAnswer}`}
-                  </span>
+            <div className="mb-10 text-base sm:text-lg font-medium leading-relaxed text-slate-100 min-h-[100px]">
+              {isPlaceholder ? (
+                <div className="space-y-3">
+                  <div className="h-5 w-full skeleton rounded-md opacity-20" />
+                  <div className="h-5 w-[90%] skeleton rounded-md opacity-20" />
+                  <div className="h-5 w-[40%] skeleton rounded-md opacity-20" />
                 </div>
-                <div className="text-slate-400 text-xs leading-relaxed">
-                  {question.isHtml ? <QuestionContent html={question.explanation} /> : <MathText text={question.explanation} />}
-                </div>
-              </div>
-            </div>
-
-            {/* Action buttons */}
-            <div className="flex gap-3">
-              {!checked ? (
-                <button onClick={doCheck} disabled={!selected}
-                  className="flex-1 py-3.5 rounded-2xl text-sm font-bold transition-all"
-                  style={{ background: selected ? subject.color : 'rgba(255,255,255,0.05)', color: selected ? '#fff' : '#475569', cursor: selected ? 'pointer' : 'not-allowed' }}>
-                  Check Answer
-                </button>
               ) : (
                 <>
-                  <button onClick={doRetry} className="py-3.5 px-5 rounded-2xl text-sm font-semibold"
-                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: '#64748b' }}>
-                    Retry
-                  </button>
-                  {!isLast ? (
-                    <button onClick={doNext}
-                      className="flex-1 py-3.5 rounded-2xl text-sm font-bold text-white flex items-center justify-center gap-2"
-                      style={{ background: subject.color }}>
-                      Next <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/></svg>
-                    </button>
-                  ) : (
-                    <button onClick={() => navigate(`/practice/${subjectId}`)}
-                      className="flex-1 py-3.5 rounded-2xl text-sm font-bold text-white"
-                      style={{ background: subject.color }}>
-                      Finish Chapter 🎉
-                    </button>
+                  {question.isHtml ? <QuestionContent html={displayText} /> : <MathText text={displayText} />}
+                  {question.image && (
+                    <div className="mt-8 mx-auto max-w-xl rounded-2xl overflow-hidden bg-white/5 p-3 border border-white/5 group relative">
+                      <img src={question.image} className="max-w-[85%] mx-auto rounded-xl shadow-2xl transition-all duration-300 group-hover:scale-[1.02] cursor-zoom-in" onClick={() => setZoomImage(question.image)} />
+                      <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 px-2 py-1 rounded-lg text-white text-[9px] font-bold backdrop-blur-md border border-white/10 pointer-events-none uppercase tracking-widest">Click to Zoom</div>
+                    </div>
                   )}
                 </>
               )}
             </div>
-          </div>
 
-          {/* Prev / Next nav */}
-          <div className="flex items-center justify-between mt-4 gap-3">
-            <button onClick={doPrev} disabled={isFirst}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-semibold transition-all"
-              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)', color: isFirst ? '#334155' : '#94a3b8', cursor: isFirst ? 'not-allowed' : 'pointer' }}
-              onMouseEnter={e => { if (!isFirst) e.currentTarget.style.background = 'rgba(255,255,255,0.08)' }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}>
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7"/></svg>
-              Previous
-            </button>
+            {isPlaceholder ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
+                {[1,2,3,4].map(i => <div key={i} className="h-14 w-full skeleton rounded-2xl opacity-10" />)}
+              </div>
+            ) : isNumerical ? (
+              <div className="mb-8 max-w-xs mx-auto">
+                <div className="mb-4 p-4 rounded-2xl text-right text-3xl font-mono min-h-[72px] flex items-center justify-end bg-black/40 border border-white/10 text-white shadow-inner">{numAnswer || '0'}</div>
+                <div className="grid grid-cols-3 gap-2">{['1','2','3','4','5','6','7','8','9','-','0','.'].map(k => (
+                  <button key={k} onClick={() => !checked && (k === '-' ? setNumAns(numAnswer.startsWith('-') ? numAnswer.slice(1) : '-' + numAnswer) : k === '.' ? !numAnswer.includes('.') && setNumAns(numAnswer + k) : setNumAns(numAnswer + k))} 
+                    className="h-14 rounded-xl bg-white/5 font-bold text-lg hover:bg-white/10 active:scale-95 transition-all border border-white/[0.03]">{k}</button>
+                ))}</div>
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <button onClick={() => !checked && setNumAns('')} className="py-3.5 rounded-xl text-[10px] font-bold bg-red-500/10 text-red-400 uppercase tracking-widest hover:bg-red-500/20 transition-colors border border-red-500/20">Clear</button>
+                  <button onClick={() => !checked && setNumAns(numAnswer.slice(0,-1))} className="py-3.5 rounded-xl text-[10px] font-bold bg-white/5 text-slate-400 uppercase tracking-widest hover:bg-white/10 transition-colors border border-white/10">Delete</button>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
+                {question.options.map((opt, i) => (
+                  <OptionButton 
+                    key={`${question.id}-${i}`} 
+                    opt={opt} 
+                    index={i} 
+                    selected={selected} 
+                    correctAnswer={checked ? question.correctAnswer : null} 
+                    mode={checked ? 'practice' : 'pyq-active'} 
+                    accentColor={subject.color} 
+                    onClick={o => !checked && setSelAns(o)} 
+                  />
+                ))}
+              </div>
+            )}
 
-            <button onClick={() => setPaletteOpen(o => !o)}
-              className="lg:hidden flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-semibold"
-              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)', color: '#94a3b8' }}>
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16"/></svg>
-              Questions
-            </button>
-
-            <button onClick={doNext} disabled={isLast}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-semibold transition-all"
-              style={{ background: isLast ? 'rgba(255,255,255,0.03)' : `${subject.color}18`, border: `1px solid ${isLast ? 'rgba(255,255,255,0.07)' : subject.color + '30'}`, color: isLast ? '#334155' : subject.color, cursor: isLast ? 'not-allowed' : 'pointer' }}
-              onMouseEnter={e => { if (!isLast) e.currentTarget.style.background = `${subject.color}28` }}
-              onMouseLeave={e => { e.currentTarget.style.background = isLast ? 'rgba(255,255,255,0.03)' : `${subject.color}18` }}>
-              Next
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7"/></svg>
-            </button>
+            {checked && !isPlaceholder && (
+              <div className="p-6 rounded-3xl mb-8 bg-white/5 border border-white/5 animate-fade-in">
+                <p className={`text-[10px] font-black uppercase tracking-[0.2em] mb-3 ${isCorrect ? 'text-emerald-500' : 'text-red-500'}`}>{isCorrect ? 'Correct!' : `Incorrect - Answer: ${question.answerLabel || question.answerText}`}</p>
+                <div className="text-slate-400 text-[14px] leading-relaxed font-normal">{question.isHtml ? <QuestionContent html={question.explanation} /> : <MathText text={question.explanation} />}</div>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* ── DESKTOP PALETTE SIDEBAR ──────────────────────────────────────── */}
-        <div className="hidden lg:flex flex-col w-60 flex-shrink-0">
-          <div className="sticky top-24 rounded-3xl p-4"
-            style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}>
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Questions</p>
-              <span className="text-xs text-slate-600">{answeredCount}/{totalQ}</span>
+        {/* ── RIGHT SIDEBAR (NAVIGATOR + STATS) ─────────────────────────────────── */}
+        <div className="hidden lg:flex flex-col w-64 flex-shrink-0 gap-4 sticky top-24 h-[calc(100vh-120px)]">
+          
+          {/* TOP 60%: NAVIGATOR */}
+          <div className="glass-card flex-[0.6] flex flex-col min-h-0 overflow-hidden">
+            <div className="p-5 border-b border-white/5 bg-white/[0.02] flex items-center justify-between">
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Navigator</p>
+              <span className="text-[10px] font-mono font-bold text-slate-600">{currentIndex + 1}/{totalQ}</span>
             </div>
-            <div className="h-1 rounded-full overflow-hidden mb-4" style={{ background: 'rgba(255,255,255,0.07)' }}>
-              <div className="h-full rounded-full transition-all duration-500" style={{ width: `${progress}%`, background: subject.color }} />
+            <div className="flex-1 overflow-y-auto p-4 grid grid-cols-5 gap-2 scrollbar-hide">
+              {questions.map((_, i) => {
+                const status = qStatus(i); const isCur = i === currentIndex
+                let bg = 'rgba(255,255,255,0.03)', border = 'rgba(255,255,255,0.05)', text = '#475569'
+                if (status === 'correct') { bg = 'rgba(16,185,129,0.15)'; border = 'rgba(16,185,129,0.3)'; text = '#10b981' }
+                else if (status === 'incorrect') { bg = 'rgba(239,68,68,0.15)'; border = 'rgba(239,68,68,0.3)'; text = '#ef4444' }
+                else if (status === 'review') { bg = 'rgba(245,158,11,0.15)'; border = 'rgba(245,158,11,0.3)'; text = '#f59e0b' }
+                else if (status === 'skipped') { bg = 'rgba(255,255,255,0.1)'; border = 'rgba(255,255,255,0.2)'; text = '#cbd5e1' }
+                return (
+                  <button key={i} onClick={() => jumpTo(i)} 
+                    className={`h-9 rounded-xl text-[10px] font-black border transition-all ${isCur ? 'scale-110 z-10' : 'hover:bg-white/5 active:scale-95'}`} 
+                    style={{ background: isCur ? subject.color : bg, borderColor: isCur ? subject.color : border, color: isCur ? '#fff' : text, boxShadow: isCur ? `0 0 20px ${subject.color}60` : 'none' }}>{i + 1}</button>
+                )
+              })}
             </div>
-            <div className="flex flex-wrap gap-1.5 mb-4 overflow-y-auto" style={{ maxHeight: 240, scrollbarWidth: 'thin' }}>
-              {questions.map((_, i) => (
-                <PaletteDot key={i} index={i} current={currentIndex} state={qStatus(i)} onClick={jumpTo} color={subject.color} />
-              ))}
+          </div>
+
+          {/* BOTTOM 40%: STATS */}
+          <div className="glass-card flex-[0.4] flex flex-col overflow-hidden">
+            <div className="p-5 border-b border-white/5 bg-white/[0.02]">
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Chapter Stats</p>
             </div>
-            <div className="space-y-1.5 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-              <LegendItem bg="rgba(16,185,129,0.2)"   border="rgba(16,185,129,0.6)"  label="Correct" />
-              <LegendItem bg="rgba(239,68,68,0.2)"    border="rgba(239,68,68,0.6)"   label="Incorrect" />
-              <LegendItem bg="rgba(245,158,11,0.15)"  border="rgba(245,158,11,0.5)"  label="Answered, unchecked" />
-              <LegendItem bg="rgba(255,255,255,0.04)" border="rgba(255,255,255,0.1)" label="Not visited" />
+            <div className="flex-1 overflow-y-auto p-5 space-y-4 scrollbar-hide">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-center flex flex-col justify-center">
+                  <p className="text-[8px] font-black text-emerald-500 mb-1 uppercase tracking-tighter">CORRECT</p>
+                  <p className="text-xl font-black text-emerald-400 leading-none">{correctCount}</p>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-red-500/10 border border-red-500/20 text-center flex flex-col justify-center">
+                  <p className="text-[8px] font-black text-red-500 mb-1 uppercase tracking-tighter">ERRORS</p>
+                  <p className="text-xl font-black text-red-400 leading-none">{incorrectCount}</p>
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
+                <div className="flex justify-between items-center mb-2">
+                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Accuracy</p>
+                  <p className="text-[14px] font-black text-white">{answeredCount > 0 ? Math.round((correctCount / answeredCount) * 100) : 0}%</p>
+                </div>
+                <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                  <div className="h-full bg-blue-500 transition-all duration-700" style={{ width: `${answeredCount > 0 ? (correctCount / answeredCount) * 100 : 0}%` }} />
+                </div>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-white/5 border border-white/10">
+                <div className="flex justify-between items-center mb-2">
+                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Completion</p>
+                  <p className="text-[14px] font-black text-white">{Math.round(progress)}%</p>
+                </div>
+                <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+                  <div className="h-full transition-all duration-1000" style={{ width: `${progress}%`, background: `linear-gradient(90deg, ${subject.color}, #fff)` }} />
+                </div>
+              </div>
+
+              <button onClick={doRestart} className="w-full py-3 rounded-xl text-[9px] font-black uppercase tracking-widest text-slate-500 hover:text-slate-300 hover:bg-white/5 transition-all border border-white/5 mt-2">Restart Chapter</button>
             </div>
-            <button onClick={doRestart}
-              className="w-full mt-4 py-2 rounded-xl text-xs font-semibold"
-              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', color: '#64748b' }}>
-              Restart Chapter
-            </button>
           </div>
         </div>
       </div>
 
-      {/* Mobile palette drawer */}
-      {paletteOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden" style={{ background: 'rgba(0,0,0,0.6)' }}>
-          <div ref={paletteRef} className="absolute bottom-0 left-0 right-0 rounded-t-3xl p-5"
-            style={{ background: '#0d1120', border: '1px solid rgba(255,255,255,0.09)', maxHeight: '70vh', overflowY: 'auto' }}>
-            <div className="flex items-center justify-between mb-4">
-              <p className="text-sm font-semibold text-white">Question Palette</p>
-              <button onClick={() => setPaletteOpen(false)} className="text-slate-500 hover:text-slate-300">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg>
+      {/* ── ALIGNED FIXED NAVIGATION DOCK ───────────────────────────────────── */}
+      <div className="fixed bottom-0 left-0 right-0 z-50 pointer-events-none">
+        <div className="max-w-full mx-auto px-6 lg:px-8 flex gap-6">
+          <div className="hidden xl:block w-72 flex-shrink-0" /> {/* Left Spacer */}
+          <div className="flex-1 min-w-0 flex justify-center items-end pb-8 pt-10 pointer-events-auto">
+            <div className="bg-[#0a0c12] p-2.5 flex gap-2.5 shadow-[0_30px_60px_rgba(0,0,0,0.8)] border border-white/10 rounded-[24px] w-full max-w-xl animate-fade-up ring-1 ring-white/[0.05]">
+              <button onClick={doPrev} disabled={isFirst} 
+                className="w-14 h-14 rounded-2xl bg-white/[0.03] flex items-center justify-center disabled:opacity-10 hover:bg-white/[0.07] transition-all active:scale-95 border border-white/5 group">
+                <svg className="w-6 h-6 text-slate-400 group-hover:text-white transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7"/></svg>
+              </button>
+              
+              {!checked ? (
+                <button onClick={doCheck} disabled={(!isNumerical && !selected) || (isNumerical && !numAnswer)} 
+                  className="flex-1 h-14 rounded-2xl font-black uppercase tracking-[0.25em] text-[12px] text-white shadow-xl transition-all active:scale-[0.98] disabled:opacity-20 disabled:cursor-not-allowed overflow-hidden relative group" 
+                  style={{ background: (selected || numAnswer) ? subject.color : 'rgba(255,255,255,0.06)' }}>
+                  <span className="relative z-10">Check Answer</span>
+                  {(selected || numAnswer) && <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-500" />}
+                </button>
+              ) : (
+                <button onClick={doNext} className="flex-1 h-14 rounded-2xl font-black uppercase tracking-[0.25em] text-[12px] text-white shadow-2xl transition-all active:scale-[0.98] overflow-hidden relative group" 
+                  style={{ background: subject.color }}>
+                  <span className="relative z-10">{isLast ? 'Finish Chapter' : 'Next Question'}</span>
+                  <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-500" />
+                </button>
+              )}
+
+              <button onClick={doNext} disabled={isLast} 
+                className="w-14 h-14 rounded-2xl bg-white/[0.03] flex items-center justify-center disabled:opacity-10 hover:bg-white/[0.07] transition-all active:scale-95 border border-white/5 group">
+                <svg className="w-6 h-6 text-slate-400 group-hover:text-white transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7"/></svg>
               </button>
             </div>
-            <div className="flex flex-wrap gap-2 mb-4">
-              {questions.map((_, i) => (
-                <PaletteDot key={i} index={i} current={currentIndex} state={qStatus(i)} onClick={jumpTo} color={subject.color} />
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-3 pt-3" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-              <LegendItem bg="rgba(16,185,129,0.2)"   border="rgba(16,185,129,0.6)" label="Correct" />
-              <LegendItem bg="rgba(239,68,68,0.2)"    border="rgba(239,68,68,0.6)"  label="Incorrect" />
-              <LegendItem bg="rgba(245,158,11,0.15)"  border="rgba(245,158,11,0.5)" label="Answered" />
-              <LegendItem bg="rgba(255,255,255,0.04)" border="rgba(255,255,255,0.1)"label="Not visited" />
-            </div>
           </div>
+          <div className="hidden lg:block w-64 flex-shrink-0" /> {/* Right Spacer */}
         </div>
-      )}
+      </div>
 
-      {/* Zoom image */}
+      {/* ── ZOOM MODAL ────────────────────────────────────────────────────── */}
       {zoomImage && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={() => setZoomImage(null)}>
-          <img src={zoomImage} alt="zoom" className="max-w-full max-h-full rounded-xl" />
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-xl p-4 animate-fade-in" onClick={() => setZoomImage(null)}>
+          <img src={zoomImage} alt="zoom" className="max-w-full max-h-full rounded-3xl bg-white p-4 shadow-2xl" />
+          <button className="absolute top-8 right-8 text-white/40 hover:text-white transition-colors" onClick={() => setZoomImage(null)}>
+            <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
         </div>
       )}
     </div>
   )
 }
-
-export default PracticeQuestionPage
