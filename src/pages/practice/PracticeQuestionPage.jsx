@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, Fragment } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { subjects } from '../../data/studyData'
 import OptionButton from '../../components/shared/OptionButton'
@@ -182,6 +182,7 @@ export default function PracticeQuestionPage() {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [zoomImage, setZoomImage] = useState(null)
   const [allChapters, setAllChapters] = useState([])
+  const [filter, setFilter] = useState('all') // 'all', 'mcq', 'numerical'
   const paletteRef = useRef()
 
   useEffect(() => {
@@ -354,6 +355,41 @@ export default function PracticeQuestionPage() {
     return () => { cancelled = true }
   }, [subject])
 
+  const segregatedData = useMemo(() => {
+    if (!questions) return { all: [], mcq: [], numerical: [], mcqCount: 0 }
+    const mcqs = questions.filter(q => !q.isNumerical)
+    const nums = questions.filter(q => q.isNumerical)
+    return {
+      all: [...mcqs, ...nums],
+      mcq: mcqs,
+      numerical: nums,
+      mcqCount: mcqs.length
+    }
+  }, [questions])
+
+  const filteredQuestions = useMemo(() => {
+    if (filter === 'all') return segregatedData.all
+    if (filter === 'mcq') return segregatedData.mcq
+    if (filter === 'numerical') return segregatedData.numerical
+    return segregatedData.all
+  }, [segregatedData, filter])
+
+  const handleFilterChange = (f) => {
+    if (f === filter) return
+    const currentQ = filteredQuestions[currentIndex]
+    setFilter(f)
+    
+    // Find next index in the target list
+    const nextList = f === 'all' ? segregatedData.all : (f === 'mcq' ? segregatedData.mcq : segregatedData.numerical)
+    if (currentQ) {
+      const nextIdx = nextList.findIndex(q => q.id === currentQ.id)
+      setCurrentIndex(nextIdx >= 0 ? nextIdx : 0)
+    } else {
+      setCurrentIndex(0)
+    }
+    setPaletteOpen(false)
+  }
+
   useEffect(() => {
     const h = e => { if (paletteRef.current && !paletteRef.current.contains(e.target)) setPaletteOpen(false) }
     document.addEventListener('mousedown', h); return () => document.removeEventListener('mousedown', h)
@@ -363,7 +399,7 @@ export default function PracticeQuestionPage() {
     try { return JSON.parse(localStorage.getItem(`completed_${subjectId}`) || '[]') } catch { return [] }
   })
 
-  const totalQ = questions?.length || 0
+  const totalQ = filteredQuestions?.length || 0
   const answeredCount = Object.values(qStates).filter(s => s.checked).length
 
   useEffect(() => {
@@ -378,8 +414,8 @@ export default function PracticeQuestionPage() {
   if (loading) return <QuestionSkeleton subjectColor={subject.color} />
   if (!questions || questions.length === 0) return <div className="relative z-10 pt-28 text-center text-slate-500">No questions found. <Link to={`/practice/${subjectId}`} className="underline">Go back</Link></div>
 
-  const rawQ = questions[currentIndex]
-  const question = rawQ.isPlaceholder ? (fullDataCache[rawQ.id] || rawQ) : rawQ
+  const rawQ = filteredQuestions[currentIndex]
+  const question = rawQ?.isPlaceholder ? (fullDataCache[rawQ.id] || rawQ) : rawQ
   const isPlaceholder = question.isPlaceholder
 
   const isFirst = currentIndex === 0
@@ -429,7 +465,7 @@ export default function PracticeQuestionPage() {
     if (s?.isReview) return 'review'
     if (!s?.selected && !s?.numAnswer && !s?.checked) return 'unanswered'
     if (s.checked) {
-      const q = questions[i]
+      const q = filteredQuestions[i]
       const full = q.isPlaceholder ? fullDataCache[q.id] : q
       if (!full) return 'skipped'
       const isNum = q.isPlaceholder ? q.isNumerical : (q.options.length === 0 && !(q.question_type_detail === 'match' || !!q.match_table))
@@ -570,6 +606,21 @@ export default function PracticeQuestionPage() {
             </button>
           </div>
 
+          {/* NEW: Filter Bar */}
+          <div className="flex items-center gap-2 mb-6 overflow-x-auto pb-2 scrollbar-hide">
+            {[
+              { id: 'all', label: 'All Questions', icon: '🎯' },
+              { id: 'mcq', label: 'Multiple Choice', icon: '🔘' },
+              { id: 'numerical', label: 'Numerical Answer', icon: '🔢' }
+            ].map(f => (
+              <button key={f.id} onClick={() => handleFilterChange(f.id)}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest whitespace-nowrap transition-all border ${filter === f.id ? 'bg-white text-black border-white shadow-[0_0_20px_rgba(255,255,255,0.2)]' : 'bg-white/5 text-slate-500 border-white/5 hover:bg-white/10'}`}>
+                <span>{f.icon}</span>
+                {f.label}
+              </button>
+            ))}
+          </div>
+
           <div className="glass-card overflow-hidden p-6 sm:p-10 mb-8 pb-10 relative">
             <div className="flex items-center justify-between mb-8">
               <div className="flex items-center gap-3">
@@ -646,24 +697,46 @@ export default function PracticeQuestionPage() {
           
           {/* TOP 60%: NAVIGATOR */}
           <div className="glass-card flex-[0.6] flex flex-col min-h-0 overflow-hidden">
-            <div className="p-5 border-b border-white/5 bg-white/[0.02] flex items-center justify-between">
-              <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">Navigator</p>
-              <span className="text-[10px] font-mono font-bold text-slate-600">{currentIndex + 1}/{totalQ}</span>
+            <div className="p-4 border-b border-white/5 bg-white/[0.01]">
+              <div className="flex p-1 rounded-xl bg-black/20 border border-white/5 gap-1">
+                {['all', 'mcq', 'numerical'].map(f => (
+                  <button key={f} onClick={() => handleFilterChange(f)}
+                    className={`flex-1 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-tighter transition-all ${filter === f ? 'bg-white/10 text-white shadow-sm' : 'text-slate-500 hover:text-slate-400'}`}>
+                    {f === 'numerical' ? 'NUM' : f}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 grid grid-cols-5 gap-2 scrollbar-hide">
-              {questions.map((_, i) => {
-                const status = qStatus(i); const isCur = i === currentIndex
-                let bg = 'rgba(255,255,255,0.03)', border = 'rgba(255,255,255,0.05)', text = '#475569'
-                if (status === 'correct') { bg = 'rgba(16,185,129,0.15)'; border = 'rgba(16,185,129,0.3)'; text = '#10b981' }
-                else if (status === 'incorrect') { bg = 'rgba(239,68,68,0.15)'; border = 'rgba(239,68,68,0.3)'; text = '#ef4444' }
-                else if (status === 'review') { bg = 'rgba(245,158,11,0.15)'; border = 'rgba(245,158,11,0.3)'; text = '#f59e0b' }
-                else if (status === 'skipped') { bg = 'rgba(255,255,255,0.1)'; border = 'rgba(255,255,255,0.2)'; text = '#cbd5e1' }
-                return (
-                  <button key={i} onClick={() => jumpTo(i)} 
-                    className={`h-9 rounded-xl text-[10px] font-black border transition-all ${isCur ? 'scale-110 z-10' : 'hover:bg-white/5 active:scale-95'}`} 
-                    style={{ background: isCur ? subject.color : bg, borderColor: isCur ? subject.color : border, color: isCur ? '#fff' : text, boxShadow: isCur ? `0 0 20px ${subject.color}60` : 'none' }}>{i + 1}</button>
-                )
-              })}
+            <div className="flex-1 overflow-y-auto p-4 scrollbar-hide">
+              <div className="grid grid-cols-5 gap-2">
+                {filteredQuestions.map((q, i) => {
+                  const status = qStatus(i); const isCur = i === currentIndex
+                  const isNum = q.isPlaceholder ? q.isNumerical : (q.options?.length === 0 && !(q.question_type_detail === 'match' || !!q.match_table))
+                  const showHeader = filter === 'all' && (i === 0 || i === segregatedData.mcqCount)
+                  
+                  let bg = 'rgba(255,255,255,0.03)', border = 'rgba(255,255,255,0.05)', text = '#475569'
+                  if (status === 'correct') { bg = 'rgba(16,185,129,0.15)'; border = 'rgba(16,185,129,0.3)'; text = '#10b981' }
+                  else if (status === 'incorrect') { bg = 'rgba(239,68,68,0.15)'; border = 'rgba(239,68,68,0.3)'; text = '#ef4444' }
+                  else if (status === 'review') { bg = 'rgba(245,158,11,0.15)'; border = 'rgba(245,158,11,0.3)'; text = '#f59e0b' }
+                  else if (status === 'skipped') { bg = 'rgba(255,255,255,0.1)'; border = 'rgba(255,255,255,0.2)'; text = '#cbd5e1' }
+                  
+                  return (
+                    <Fragment key={q.id}>
+                      {showHeader && (
+                        <div className={`col-span-5 text-[8px] font-black uppercase tracking-[0.2em] py-2 mb-2 ${i === 0 ? 'text-slate-500' : 'text-blue-500 border-t border-white/5 pt-4 mt-2'}`}>
+                          {i === 0 ? 'Section A: MCQs' : 'Section B: Numerical'}
+                        </div>
+                      )}
+                      <button onClick={() => jumpTo(i)} 
+                        className={`h-10 rounded-xl text-[10px] font-black border transition-all relative overflow-hidden ${isCur ? 'scale-110 z-10' : 'hover:bg-white/5 active:scale-95'}`} 
+                        style={{ background: isCur ? subject.color : bg, borderColor: isCur ? subject.color : border, color: isCur ? '#fff' : text, boxShadow: isCur ? `0 0 20px ${subject.color}60` : 'none' }}>
+                        {i + 1}
+                        <div className="absolute bottom-0.5 right-0.5 w-1 h-1 rounded-full" style={{ background: isNum ? '#3b82f6' : 'transparent' }} />
+                      </button>
+                    </Fragment>
+                  )
+                })}
+              </div>
             </div>
           </div>
 
