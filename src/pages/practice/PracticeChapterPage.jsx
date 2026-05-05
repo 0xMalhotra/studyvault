@@ -60,7 +60,7 @@ const PracticeChapterPage = () => {
         const counts = {}
         for (const row of allData) {
           // Only count valid questions
-          if (!row.correct_option && !row.correct_answer) continue
+          if (!row.chapter || (!row.correct_option && !row.correct_answer)) continue
           const slug = slugify(row.chapter)
           if (!counts[slug]) counts[slug] = { name: row.chapter, count: 0, mcq: 0, num: 0 }
           counts[slug].count += 1
@@ -176,7 +176,8 @@ const PracticeChapterPage = () => {
                   e.currentTarget.style.borderColor = subject.color + '44'
                   
                   // PREFETCH: Load question list for this chapter in background
-                  const cacheKey = `${subject.name}::${chapter.name}::ids`
+                  const chapterSlug = slugify(chapter.name)
+                  const cacheKey = `${subject.name}::${chapterSlug}::ids`
                   if (!practiceCache.chapterQuestions.has(cacheKey)) {
                     supabase.from('questions')
                       .select('id, question_type_detail, option_a')

@@ -6,6 +6,11 @@ import { getCachedStats, setCachedStats } from '../../lib/practiceStore'
 const PracticeSubjectPage = () => {
   const navigate = useNavigate()
 
+  function slugify(str) {
+    if (!str) return ''
+    return String(str).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  }
+
   const prefetchSubject = async (subject) => {
     const cached = getCachedStats(subject.name)
     if (cached) return
@@ -23,8 +28,8 @@ const PracticeSubjectPage = () => {
     }
     const stats = {}
     for (const row of allData) {
-      if (!row.correct_option && !row.correct_answer) continue
-      const slug = row.chapter.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+      if (!row.chapter || (!row.correct_option && !row.correct_answer)) continue
+      const slug = slugify(row.chapter)
       if (!stats[slug]) stats[slug] = { name: row.chapter, count: 0, mcq: 0, num: 0 }
       stats[slug].count += 1
       if (row.option_a === 'N/A') stats[slug].num += 1; else stats[slug].mcq += 1

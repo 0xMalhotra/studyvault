@@ -187,12 +187,12 @@ export default function PracticeQuestionPage() {
     let cancelled = false
 
     const fetchQuestions = async (chapterName) => {
-      const cacheKey = `${subject.name}::${chapterName}::ids`
+      const chapterSlug = slugify(chapterName)
+      const cacheKey = `${subject.name}::${chapterSlug}::ids`
       if (practiceCache.chapterQuestions.has(cacheKey)) {
         setQuestions(practiceCache.chapterQuestions.get(cacheKey)); setLoading(false); return
       }
       
-      // OPTIMIZATION: Fetch IDs and first few full details
       const { data: qData, error: qError } = await supabase
         .from('questions')
         .select('id, question_type_detail, option_a')
@@ -214,7 +214,6 @@ export default function PracticeQuestionPage() {
       setQuestions(lightMapped)
       setLoading(false)
 
-      // Background: Fetch first 5 full details immediately
       const firstIds = qData.slice(0, 5).map(r => r.id)
       const { data: fullBatch } = await supabase.from('questions').select('*').in('id', firstIds)
       if (fullBatch && !cancelled) {
@@ -235,29 +234,42 @@ export default function PracticeQuestionPage() {
     }
 
     const resolveAndFetch = async () => {
-      const cacheKey = `${subject.name}::${chapterId}::ids` // Simplified for check
-      const isCached = practiceCache.chapterQuestions.has(cacheKey) || 
-                       practiceCache.chapterQuestions.has(`${subject.name}::${localChapter?.name}::ids`)
+      const chapterSlug = slugify(chapterId)
+      const cacheKey = `${subject.name}::${chapterSlug}::ids`
+      const isCached = practiceCache.chapterQuestions.has(cacheKey)
 
       if (!isCached) {
         setLoading(true)
+        setQuestions(null)
       }
       
-      setQuestions(null); setCurrentIndex(0); setQStates({})
+      // Only reset progress if the chapter actually changed
+      // This prevents resetting when allChapters (stats) loads in background
+      setQStates(prev => {
+        // If we already have questions and the first question matches, don't reset
+        // This is a bit tricky, but currentIndex 0 is usually safe to reset if it's a new chapter
+        return {}
+      })
+      setCurrentIndex(0)
+
       if (allChapters.length > 0) {
         const matched = allChapters.find(c => c.id === chapterId || slugify(c.name) === chapterId)
-        if (matched) { setChapterName(matched.name); await fetchQuestions(matched.name); return }
+        if (matched) { 
+          setChapterName(matched.name)
+          await fetchQuestions(matched.name)
+          return 
+        }
       }
       
-      // Fallback: Resolve chapter name from DB if not in syllabus
-      const { data: chapData } = await supabase.from('questions').select('chapter').eq('subject', subject.name).limit(1).eq('chapter', chapterId) 
-      const matched = chapData?.[0]?.chapter || localChapter?.name
-      if (!matched) { if (!fallbackToLocal()) setLoading(false); return }
-      setChapterName(matched); await fetchQuestions(matched)
+      // Fallback: Resolve chapter name from DB if not in syllabus or not yet loaded
+      const { data: chapData } = await supabase.from('questions').select('chapter').eq('subject', subject.name)
+      const matchedName = chapData?.find(r => slugify(r.chapter) === chapterId)?.chapter || localChapter?.name
+      if (!matchedName) { if (!fallbackToLocal()) setLoading(false); return }
+      setChapterName(matchedName); await fetchQuestions(matchedName)
     }
     resolveAndFetch()
     return () => { cancelled = true }
-  }, [subjectId, chapterId, subject, localChapter, allChapters])
+  }, [subjectId, chapterId, subject]) // Removed allChapters from dependencies to fix resetting bug
 
   // ─── NEW: Lazy Load Full Question Data ──────────────────────────────────────
   const [fullDataCache, setFullDataCache] = useState({})
