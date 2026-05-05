@@ -5,6 +5,7 @@ import OptionButton from '../../components/shared/OptionButton'
 import MatchTable from '../../components/shared/MatchTable'
 import QuestionContent from '../../components/shared/QuestionContent'
 import { supabase } from '../../lib/supabase'
+import { haptics } from '../../lib/haptics'
 
 // ─── Image base URL ───────────────────────────────────────────────────────────
 const IMAGE_BASE = '/scraped_images/'
@@ -441,14 +442,28 @@ export default function PracticeQuestionPage() {
 
   const upd = patch => setQStates(p => ({ ...p, [currentIndex]: { ...(p[currentIndex] || {}), ...patch } }))
   const setSelAns = val => upd({ selected: val, checked: false })
-  const setNumAns = val => upd({ numAnswer: val, checked: false })
-  const toggleRev = () => upd({ isReview: !isReview })
-  const doCheck = () => { if (selected || (isNumerical && numAnswer)) upd({ checked: true, isReview: false }) }
+  const setNumAns = val => { haptics.light(); upd({ numAnswer: val, checked: false }) }
+  const toggleRev = () => { haptics.light(); upd({ isReview: !isReview }) }
+  const doCheck = () => {
+    if (selected || (isNumerical && numAnswer)) {
+      let correct = false;
+      if (isNumerical) {
+        correct = checkNumerical(numAnswer, question.correctAnswer) || checkNumerical(numAnswer, question.answerText);
+      } else {
+        correct = selected === question.correctAnswer;
+      }
+      
+      if (correct) haptics.success();
+      else haptics.error();
+      
+      upd({ checked: true, isReview: false })
+    }
+  }
   const doRetry = () => upd({ selected: null, numAnswer: '', checked: false })
-  const doNext = () => { if (!isLast) { setCurrentIndex(i => i + 1); setPaletteOpen(false) } }
-  const doPrev = () => { if (!isFirst) { setCurrentIndex(i => i - 1); setPaletteOpen(false) } }
-  const jumpTo = i => { setCurrentIndex(i); setPaletteOpen(false) }
-  const doRestart = () => { setCurrentIndex(0); setQStates({}); setPaletteOpen(false) }
+  const doNext = () => { if (!isLast) { haptics.light(); setCurrentIndex(i => i + 1); setPaletteOpen(false) } }
+  const doPrev = () => { if (!isFirst) { haptics.light(); setCurrentIndex(i => i - 1); setPaletteOpen(false) } }
+  const jumpTo = i => { haptics.light(); setCurrentIndex(i); setPaletteOpen(false) }
+  const doRestart = () => { haptics.medium(); setCurrentIndex(0); setQStates({}); setPaletteOpen(false) }
 
   if (answeredCount === totalQ) {
     const pct = Math.round((correctCount / totalQ) * 100)

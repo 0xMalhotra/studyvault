@@ -7,6 +7,7 @@ import QuestionPalette from '../../components/shared/QuestionPalette'
 import OptionButton from '../../components/shared/OptionButton'
 import MatchTable from '../../components/shared/MatchTable'
 import { supabase } from '../../lib/supabase'
+import { haptics } from '../../lib/haptics'
 
 const subjectColors = { Physics: '#3b82f6', Chemistry: '#10b981', Mathematics: '#f59e0b' }
 
@@ -267,14 +268,14 @@ const PYQTestPage = () => {
 
             {/* Prev / Mark / Clear / Next */}
             <div className="flex items-center justify-between mt-6 gap-3">
-              <button onClick={() => setCurrentIndex(i => Math.max(0, i-1))} disabled={currentIndex === 0}
+              <button onClick={() => { haptics.light(); setCurrentIndex(i => Math.max(0, i-1)) }} disabled={currentIndex === 0}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-medium transition-all"
                 style={{ background:'rgba(255,255,255,0.05)', border:'1px solid rgba(255,255,255,0.09)', color: currentIndex===0?'#334155':'#94a3b8', cursor: currentIndex===0?'not-allowed':'pointer' }}>
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7"/></svg>
                 Prev
               </button>
 
-              <button onClick={() => setAnswers(prev => ({ ...prev, [currentIndex]: { ...prev[currentIndex], marked: !prev[currentIndex]?.marked } }))}
+              <button onClick={() => { haptics.light(); setAnswers(prev => ({ ...prev, [currentIndex]: { ...prev[currentIndex], marked: !prev[currentIndex]?.marked } })) }}
                 className="px-4 py-2.5 rounded-2xl text-xs font-medium"
                 style={{ background:'rgba(250,204,21,0.1)', border:'1px solid rgba(250,204,21,0.3)', color:'#facc15' }}>
                 {answers[currentIndex]?.marked ? 'Unmark' : 'Mark for Review'}
@@ -286,7 +287,7 @@ const PYQTestPage = () => {
                 Clear
               </button>
 
-              <button onClick={() => setCurrentIndex(i => Math.min(totalQ-1, i+1))} disabled={currentIndex === totalQ-1}
+              <button onClick={() => { haptics.light(); setCurrentIndex(i => Math.min(totalQ-1, i+1)) }} disabled={currentIndex === totalQ-1}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-2xl text-sm font-medium transition-all"
                 style={{ background:`${accentColor}18`, border:`1px solid ${accentColor}30`, color: accentColor, cursor: currentIndex===totalQ-1?'not-allowed':'pointer' }}>
                 Next

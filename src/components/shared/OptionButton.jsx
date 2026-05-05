@@ -1,4 +1,5 @@
 import QuestionContent from './QuestionContent'
+import { haptics } from '../../lib/haptics'
 
 const LABELS = ['A', 'B', 'C', 'D']
 
@@ -70,7 +71,12 @@ const OptionButton = ({
 
   return (
     <button
-      onClick={() => !locked && onClick?.(optionValue)}
+      onClick={() => {
+        if (!locked) {
+          haptics.light();
+          onClick?.(optionValue);
+        }
+      }}
       disabled={locked}
       className="w-full text-left flex items-center gap-4 px-5 py-4 rounded-2xl transition-all duration-300"
       style={{ background: bg, border: `1px solid ${border}`, cursor: locked ? 'default' : 'pointer' }}
