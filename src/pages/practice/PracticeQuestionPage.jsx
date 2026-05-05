@@ -6,6 +6,7 @@ import MatchTable from '../../components/shared/MatchTable'
 import QuestionContent from '../../components/shared/QuestionContent'
 import { supabase } from '../../lib/supabase'
 import { haptics } from '../../lib/haptics'
+import { practiceCache, getCachedStats, setCachedStats } from '../../lib/practiceStore'
 
 // ─── Image base URL ───────────────────────────────────────────────────────────
 const IMAGE_BASE = '/scraped_images/'
@@ -17,10 +18,6 @@ function slugify(str) {
 }
 
 const OPTION_FIELDS = ['option_a', 'option_b', 'option_c', 'option_d']
-
-// ─── Simple Global Cache ──────────────────────────────────────────────────────
-const questionCache = new Map()
-const sidebarCache = new Map()
 
 function getOptionByLetter(row) {
   const index = { A: 0, B: 1, C: 2, D: 3 }[String(row.correct_option || '').trim().toUpperCase()]
@@ -191,14 +188,14 @@ export default function PracticeQuestionPage() {
 
     const fetchQuestions = async (chapterName) => {
       const cacheKey = `${subject.name}::${chapterName}::ids`
-      if (questionCache.has(cacheKey)) {
-        setQuestions(questionCache.get(cacheKey)); setLoading(false); return
+      if (practiceCache.chapterQuestions.has(cacheKey)) {
+        setQuestions(practiceCache.chapterQuestions.get(cacheKey)); setLoading(false); return
       }
       
-      // OPTIMIZATION: Fetch only IDs first for instant navigator load
+      // OPTIMIZATION: Fetch IDs and first few full details
       const { data: qData, error: qError } = await supabase
         .from('questions')
-        .select('id, question_type_detail, option_a') // Fetch minimal info needed for structure
+        .select('id, question_type_detail, option_a')
         .eq('subject', subject.name)
         .eq('chapter', chapterName)
         .order('source_date', { ascending: false, nullsFirst: false })
@@ -207,16 +204,28 @@ export default function PracticeQuestionPage() {
       if (cancelled) return
       if (qError || !qData || qData.length === 0) { if (!fallbackToLocal()) setLoading(false); return }
       
-      // Store light versions (placeholders)
       const lightMapped = qData.map(row => ({ 
         id: row.id, 
         isPlaceholder: true,
         isNumerical: row.option_a === 'N/A' && row.question_type_detail !== 'match'
       }))
       
-      questionCache.set(cacheKey, lightMapped)
+      practiceCache.chapterQuestions.set(cacheKey, lightMapped)
       setQuestions(lightMapped)
       setLoading(false)
+
+      // Background: Fetch first 5 full details immediately
+      const firstIds = qData.slice(0, 5).map(r => r.id)
+      const { data: fullBatch } = await supabase.from('questions').select('*').in('id', firstIds)
+      if (fullBatch && !cancelled) {
+        const batchMap = {}
+        fullBatch.forEach(row => {
+          const full = mapSupabaseQuestion(row)
+          batchMap[row.id] = full
+          practiceCache.questionDetails.set(row.id, full)
+        })
+        setFullDataCache(prev => ({ ...prev, ...batchMap }))
+      }
     }
 
     const fallbackToLocal = () => {
@@ -226,14 +235,22 @@ export default function PracticeQuestionPage() {
     }
 
     const resolveAndFetch = async () => {
-      setLoading(true); setQuestions(null); setCurrentIndex(0); setQStates({})
+      const cacheKey = `${subject.name}::${chapterId}::ids` // Simplified for check
+      const isCached = practiceCache.chapterQuestions.has(cacheKey) || 
+                       practiceCache.chapterQuestions.has(`${subject.name}::${localChapter?.name}::ids`)
+
+      if (!isCached) {
+        setLoading(true)
+      }
+      
+      setQuestions(null); setCurrentIndex(0); setQStates({})
       if (allChapters.length > 0) {
         const matched = allChapters.find(c => c.id === chapterId || slugify(c.name) === chapterId)
         if (matched) { setChapterName(matched.name); await fetchQuestions(matched.name); return }
       }
+      
       // Fallback: Resolve chapter name from DB if not in syllabus
       const { data: chapData } = await supabase.from('questions').select('chapter').eq('subject', subject.name).limit(1).eq('chapter', chapterId) 
-      // Note: This fallback is simplified for speed
       const matched = chapData?.[0]?.chapter || localChapter?.name
       if (!matched) { if (!fallbackToLocal()) setLoading(false); return }
       setChapterName(matched); await fetchQuestions(matched)
@@ -249,39 +266,45 @@ export default function PracticeQuestionPage() {
   useEffect(() => {
     if (!questions || !questions[currentIndex]) return
     const q = questions[currentIndex]
-    if (!q.isPlaceholder) return // Already have full data (local or already fetched)
-    if (fullDataCache[q.id]) return // Already in details cache
+    
+    // 1. Check local fullDataCache and global practiceCache first
+    if (practiceCache.questionDetails.has(q.id) && !fullDataCache[q.id]) {
+      setFullDataCache(prev => ({ ...prev, [q.id]: practiceCache.questionDetails.get(q.id) }))
+      return
+    }
+    if (fullDataCache[q.id]) return
 
     let cancelled = false
-    const fetchDetail = async () => {
+    const fetchBatch = async () => {
       setLoadingDetails(true)
+      
+      // Batch up to 5 questions starting from current
+      const batchIds = []
+      for (let i = currentIndex; i < currentIndex + 5; i++) {
+        if (questions[i] && !fullDataCache[questions[i].id] && !practiceCache.questionDetails.has(questions[i].id)) {
+          batchIds.push(questions[i].id)
+        }
+      }
+
+      if (batchIds.length === 0) { setLoadingDetails(false); return }
+
       const { data, error } = await supabase
         .from('questions')
         .select('*')
-        .eq('id', q.id)
-        .single()
+        .in('id', batchIds)
       
       if (!cancelled && !error && data) {
-        const full = mapSupabaseQuestion(data)
-        setFullDataCache(prev => ({ ...prev, [q.id]: full }))
-        
-        // PREFETCH NEXT 2 QUESTIONS
-        const nextIndices = [currentIndex + 1, currentIndex + 2]
-        nextIndices.forEach(idx => {
-          const nq = questions[idx]
-          if (nq && nq.isPlaceholder && !fullDataCache[nq.id]) {
-            supabase.from('questions').select('*').eq('id', nq.id).single().then(({ data: ndata }) => {
-              if (ndata) {
-                const nfull = mapSupabaseQuestion(ndata)
-                setFullDataCache(p => ({ ...p, [nq.id]: nfull }))
-              }
-            })
-          }
+        const batchMap = {}
+        data.forEach(row => {
+          const full = mapSupabaseQuestion(row)
+          batchMap[row.id] = full
+          practiceCache.questionDetails.set(row.id, full)
         })
+        setFullDataCache(prev => ({ ...prev, ...batchMap }))
       }
       setLoadingDetails(false)
     }
-    fetchDetail()
+    fetchBatch()
     return () => { cancelled = true }
   }, [currentIndex, questions, fullDataCache])
 
@@ -290,6 +313,13 @@ export default function PracticeQuestionPage() {
     let cancelled = false
 
     const fetchAllStats = async () => {
+      // Check Cache First
+      const cached = getCachedStats(subject.name)
+      if (cached) {
+        processStats(cached)
+        return
+      }
+
       let allData = []
       let from = 0
       let step = 1000
@@ -297,7 +327,7 @@ export default function PracticeQuestionPage() {
       while (true) {
         const { data, error } = await supabase
           .from('questions')
-          .select('chapter, option_a')
+          .select('chapter, option_a, correct_option, correct_answer')
           .eq('subject', subject.name)
           .range(from, from + step - 1)
         
@@ -308,27 +338,34 @@ export default function PracticeQuestionPage() {
       }
 
       if (cancelled) return
-      if (allData.length === 0) {
-        setAllChapters((subject.chapters || []).map(c => ({ 
-          ...c, 
-          count: c.questionCount || 0,
-          mcq: Math.floor((c.questionCount || 0) * 0.8),
-          num: Math.ceil((c.questionCount || 0) * 0.2)
-        })))
-        return
-      }
-
+      
       const stats = {}
       for (const row of allData) {
+        if (!row.correct_option && !row.correct_answer) continue
         const slug = slugify(row.chapter)
         if (!stats[slug]) stats[slug] = { name: row.chapter, total: 0, mcq: 0, num: 0 }
         stats[slug].total += 1
         if (row.option_a === 'N/A') stats[slug].num += 1; else stats[slug].mcq += 1
       }
       
+      const result = Object.entries(stats).map(([slug, info]) => ({
+        slug,
+        name: info.name,
+        count: info.total,
+        mcq: info.mcq,
+        num: info.num
+      }))
+
+      setCachedStats(subject.name, result)
+      processStats(result)
+    }
+
+    const processStats = (sbStats) => {
+      const statsMap = Object.fromEntries(sbStats.map(s => [s.slug, s]))
       const localIds = new Set((subject.chapters || []).map(c => c.id))
+      
       const merged = (subject.chapters || []).map(localChap => {
-        const s = stats[localChap.id] || stats[slugify(localChap.name)] || { total: 0, mcq: 0, num: 0 }
+        const s = statsMap[localChap.id] || statsMap[slugify(localChap.name)] || { total: 0, mcq: 0, num: 0 }
         const finalCount = s.total || localChap.questionCount || 0
         return { 
           ...localChap, 
@@ -338,14 +375,14 @@ export default function PracticeQuestionPage() {
         }
       })
       
-      const extras = Object.keys(stats)
-        .filter(slug => !localIds.has(slug))
-        .map(slug => ({
-          id: slug,
-          name: stats[slug].name,
-          count: stats[slug].total,
-          mcq: stats[slug].mcq,
-          num: stats[slug].num
+      const extras = sbStats
+        .filter(s => !localIds.has(s.slug) && !localIds.has(slugify(s.name)))
+        .map(s => ({
+          id: s.slug,
+          name: s.name,
+          count: s.count,
+          mcq: s.mcq,
+          num: s.num
         }))
 
       setAllChapters([...merged, ...extras])

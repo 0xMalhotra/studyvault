@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { subjects } from '../../data/studyData'
 import { supabase } from '../../lib/supabase'
+import { getCachedStats, setCachedStats, practiceCache } from '../../lib/practiceStore'
 
 // Slug a chapter name for use as URL param
 // e.g. "Units, Measurements and Errors" → "units-measurements-and-errors"
@@ -25,40 +26,64 @@ const PracticeChapterPage = () => {
     let cancelled = false
 
     const fetchAllCounts = async () => {
-      let allData = []
-      let from = 0
-      let step = 1000
-
-      while (true) {
-        const { data, error } = await supabase
-          .from('questions')
-          .select('chapter, correct_option, correct_answer')
-          .eq('subject', subject.name)
-          .range(from, from + step - 1)
-        
-        if (cancelled || error || !data || data.length === 0) break
-        allData = [...allData, ...data]
-        if (data.length < step) break
-        from += step
+      // 1. Check Cache First
+      const cached = getCachedStats(subject.name)
+      if (cached) {
+        setSbChapters(cached)
+        setLoadingSb(false)
+        return
       }
 
-      if (cancelled) return
-
-      const counts = {}
-      for (const row of allData) {
-        // Only count valid questions
-        if (!row.correct_option && !row.correct_answer) continue
-        const slug = slugify(row.chapter)
-        if (!counts[slug]) counts[slug] = { name: row.chapter, count: 0 }
-        counts[slug].count += 1
-      }
+      // 2. Optimistic UI: Use local data if available to show something instantly
+      // (This is handled by the merge logic below, but we set loadingSb to false if we want instant feel)
       
-      setSbChapters(
-        Object.entries(counts)
-          .map(([slug, info]) => ({ slug, name: info.name, count: info.count }))
+      try {
+        let allData = []
+        let from = 0
+        let step = 1000
+
+        while (true) {
+          const { data, error } = await supabase
+            .from('questions')
+            .select('chapter, correct_option, correct_answer, option_a') // Added option_a for consistency with QuestionPage
+            .eq('subject', subject.name)
+            .range(from, from + step - 1)
+          
+          if (cancelled || error || !data || data.length === 0) break
+          allData = [...allData, ...data]
+          if (data.length < step) break
+          from += step
+        }
+
+        if (cancelled) return
+
+        const counts = {}
+        for (const row of allData) {
+          // Only count valid questions
+          if (!row.correct_option && !row.correct_answer) continue
+          const slug = slugify(row.chapter)
+          if (!counts[slug]) counts[slug] = { name: row.chapter, count: 0, mcq: 0, num: 0 }
+          counts[slug].count += 1
+          if (row.option_a === 'N/A') counts[slug].num += 1; else counts[slug].mcq += 1
+        }
+        
+        const result = Object.entries(counts)
+          .map(([slug, info]) => ({ 
+            slug, 
+            name: info.name, 
+            count: info.count,
+            mcq: info.mcq,
+            num: info.num
+          }))
           .sort((a, b) => a.name.localeCompare(b.name))
-      )
-      setLoadingSb(false)
+
+        setCachedStats(subject.name, result)
+        setSbChapters(result)
+      } catch (err) {
+        console.error("Error fetching counts:", err)
+      } finally {
+        if (!cancelled) setLoadingSb(false)
+      }
     }
 
     fetchAllCounts()
@@ -149,6 +174,24 @@ const PracticeChapterPage = () => {
                 onMouseEnter={e => {
                   e.currentTarget.style.boxShadow = `0 16px 48px ${subject.color}22`
                   e.currentTarget.style.borderColor = subject.color + '44'
+                  
+                  // PREFETCH: Load question list for this chapter in background
+                  const cacheKey = `${subject.name}::${chapter.name}::ids`
+                  if (!practiceCache.chapterQuestions.has(cacheKey)) {
+                    supabase.from('questions')
+                      .select('id, question_type_detail, option_a')
+                      .eq('subject', subject.name)
+                      .eq('chapter', chapter.name)
+                      .order('source_date', { ascending: false, nullsFirst: false })
+                      .order('source_year', { ascending: false, nullsFirst: false })
+                      .then(({ data }) => {
+                        if (data) {
+                          practiceCache.chapterQuestions.set(cacheKey, data.map(r => ({
+                            id: r.id, isPlaceholder: true, isNumerical: r.option_a === 'N/A' && r.question_type_detail !== 'match'
+                          })))
+                        }
+                      })
+                  }
                 }}
                 onMouseLeave={e => {
                   e.currentTarget.style.boxShadow = ''

@@ -1,8 +1,37 @@
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { subjects } from '../../data/studyData'
+import { supabase } from '../../lib/supabase'
+import { getCachedStats, setCachedStats } from '../../lib/practiceStore'
 
 const PracticeSubjectPage = () => {
   const navigate = useNavigate()
+
+  const prefetchSubject = async (subject) => {
+    const cached = getCachedStats(subject.name)
+    if (cached) return
+    
+    // Fetch in background
+    let allData = []
+    let from = 0
+    let step = 1000
+    while (true) {
+      const { data, error } = await supabase.from('questions').select('chapter, option_a, correct_option, correct_answer').eq('subject', subject.name).range(from, from + step - 1)
+      if (error || !data || data.length === 0) break
+      allData = [...allData, ...data]
+      if (data.length < step) break
+      from += step
+    }
+    const stats = {}
+    for (const row of allData) {
+      if (!row.correct_option && !row.correct_answer) continue
+      const slug = row.chapter.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+      if (!stats[slug]) stats[slug] = { name: row.chapter, count: 0, mcq: 0, num: 0 }
+      stats[slug].count += 1
+      if (row.option_a === 'N/A') stats[slug].num += 1; else stats[slug].mcq += 1
+    }
+    const result = Object.entries(stats).map(([slug, info]) => ({ slug, name: info.name, count: info.count, mcq: info.mcq, num: info.num }))
+    setCachedStats(subject.name, result)
+  }
 
   return (
     <div className="relative z-10 min-h-screen px-6 pb-16 pt-28">
@@ -45,6 +74,7 @@ const PracticeSubjectPage = () => {
                 onMouseEnter={e => {
                   e.currentTarget.style.boxShadow = `0 16px 40px ${subject.glowColor}`
                   e.currentTarget.style.borderColor = subject.color + '44'
+                  prefetchSubject(subject)
                 }}
                 onMouseLeave={e => {
                   e.currentTarget.style.boxShadow = ''
